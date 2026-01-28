@@ -1,0 +1,36 @@
+name: Daily Briefing Page
+
+on:
+  schedule:
+    - cron: "0 0 * * *"  # UTC 00:00 = KST 09:00
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install deps
+        run: pip install feedparser pytz
+
+      - name: Generate page
+        run: python news_briefing.py
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/index.html
+          git diff --cached --quiet && echo "No changes" && exit 0
+          git commit -m "Update briefing page"
+          git push

@@ -1,4 +1,7 @@
 import feedparser
+import os
+os.makedirs("docs", exist_ok=True)
+
 from datetime import datetime, timedelta
 import pytz
 import html
@@ -7,7 +10,7 @@ RSS_URL = (
     "https://news.google.com/rss/search?q="
     "(마약+OR+마약류+OR+향정+OR+약물)"
     "+AND+(적발+OR+검거+OR+압수+OR+밀수+OR+수사+OR+단속)"
-    "+AND+(오늘+OR+어제+OR+최근+OR+속보)
+    "+AND+(오늘+OR+어제+OR+최근+OR+속보)"
     "-연예-문화-생활-여행-음식-체험-다큐"
     "&hl=ko&gl=KR&ceid=KR:ko"
 )

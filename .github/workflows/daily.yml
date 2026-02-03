@@ -31,12 +31,15 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+          # 항상 최신 원격 상태로 맞춘 뒤 작업(충돌 예방)
+          git fetch origin main
+          git checkout main
+          git reset --hard origin/main
+
+          python news_briefing.py
+
           git add docs/index.html
           git diff --cached --quiet && echo "No changes" && exit 0
 
           git commit -m "Update briefing page"
-
-          # 🔑 원격 변경사항 먼저 반영
-          git pull --rebase origin main
-
           git push origin main

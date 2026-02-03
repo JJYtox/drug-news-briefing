@@ -5,13 +5,12 @@ os.makedirs("docs", exist_ok=True)
 from datetime import datetime, timedelta
 import pytz
 import html
+import re
 
 RSS_URL = (
     "https://news.google.com/rss/search?q="
     "(마약+OR+마약류+OR+향정+OR+약물)"
     "+AND+(적발+OR+검거+OR+압수+OR+밀수+OR+수사+OR+단속)"
-    "+AND+(오늘+OR+어제+OR+최근+OR+속보)"
-    "-연예-문화-생활-여행-음식-체험-다큐"
     "&hl=ko&gl=KR&ceid=KR:ko"
 )
 
@@ -33,6 +32,39 @@ for e in getattr(feed, "entries", []):
     if not title or not link:
         continue
     items.append((published, title, link))
+
+def split_source(title: str):
+    """
+    제목 끝의 ' - 언론사' 또는 ' | 언론사' 형태를 분리.
+    반환: (base_title, source_or_empty)
+    """
+    t = title.strip()
+    t = re.sub(r"\s+", " ", t)
+
+    # 끝부분 구분자(-, |, –) 뒤 1~30자(언론사명으로 가정)
+    m = re.search(r"\s*[-|–]\s*([^-|–]{1,30})$", t)
+    if m:
+        source = m.group(1).strip()
+        base = re.sub(r"\s*[-|–]\s*[^-|–]{1,30}$", "", t).strip()
+        return base, source
+    return t, ""
+
+
+seen = set()
+deduped = []
+
+for published, title, link in items:
+    base, source = split_source(title)
+    key = base  # 중복 판정은 언론사 제거된 base 제목 기준
+    if key in seen:
+        continue
+    seen.add(key)
+    # items를 (published, base_title, link, source) 형태로 확장
+    deduped.append((published, base, link, source))
+
+items = deduped
+
+
 
 items.sort(reverse=True)
 
@@ -65,11 +97,19 @@ def render():
         body = """  <div class="empty">최근 24시간 기준으로 수집된 기사가 없습니다.</div>\n"""
     else:
         body = "  <ul>\n"
-        for pub, t, link in items:
+        for pub, t, link, source in items:
             pub_s = pub.strftime("%Y-%m-%d %H:%M")
-            body += f"    <li><a href=\"{html.escape(link)}\" target=\"_blank\" rel=\"noopener noreferrer\">{html.escape(t)}</a><span class=\"time\">({html.escape(pub_s)})</span></li>\n"
+            badge = (
+                f" <span style='border:1px solid #ddd;border-radius:10px;"
+                f"padding:1px 8px;font-size:12px;color:#555;'>"
+                f"{html.escape(source)}</span>"
+                if source else ""
+            )
+            body += (
+                f"    <li><a href=\"{html.escape(link)}\" target=\"_blank\" rel=\"noopener noreferrer\">"
+                f"{html.escape(t)}</a>{badge}<span class=\"time\">({html.escape(pub_s)})</span></li>\n"
+            )
         body += "  </ul>\n"
-
     tail = """
 </body>
 </html>

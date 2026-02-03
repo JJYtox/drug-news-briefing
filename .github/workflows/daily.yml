@@ -2,7 +2,7 @@ name: Daily Briefing Page
 
 on:
   schedule:
-    - cron: "0 0 * * *"
+    - cron: "0 0 * * *"  # UTC 00:00 = KST 09:00
   workflow_dispatch:
 
 concurrency:
@@ -16,7 +16,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout (main)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -29,46 +29,14 @@ jobs:
       - name: Install deps
         run: pip install feedparser pytz
 
-      - name: Generate and Push (with retry)
-        run: |
-          set -e
+      - name: Generate page
+        run: python news_briefing.py
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # 최대 5회 재시도 (원격이 계속 변해도 결국 성공하도록)
-          for i in 1 2 3 4 5; do
-            echo "Attempt $i/5"
-
-            # 1) 원격 최신으로 동기화
-            git fetch origin main
-            git checkout main
-            git reset --hard origin/main
-
-            # 2) 산출물 생성
-            python news_briefing.py
-
-            # 3) 변경 없으면 종료
-            git add docs/index.html
-            if git diff --cached --quiet; then
-              echo "No changes to commit."
-              exit 0
-            fi
-
-            # 4) 커밋 생성
-            git commit -m "Update briefing page"
-
-            # 5) 원격이 또 바뀌었을 수 있으니 rebase로 흡수 후 push 시도
-            git pull --rebase origin main
-
-            if git push origin main; then
-              echo "Push succeeded."
-              exit 0
-            fi
-
-            echo "Push failed; retrying after short wait..."
-            sleep 5
-          done
-
-          echo "Push failed after retries."
-          exit 1
+      # docs/ 내용을 gh-pages 브랜치 루트로 배포 (브랜치 충돌 원천 제거)
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./docs
+          force_orphan: true

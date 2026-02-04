@@ -1,11 +1,11 @@
 import feedparser
 import os
-os.makedirs("docs", exist_ok=True)
-
 from datetime import datetime, timedelta
 import pytz
 import html
 import re
+
+os.makedirs("docs", exist_ok=True)
 
 RSS_URL = (
     "https://news.google.com/rss/search?q="
@@ -20,19 +20,9 @@ cutoff = now - timedelta(hours=24)
 
 feed = feedparser.parse(RSS_URL)
 
-items = []
-for e in getattr(feed, "entries", []):
-    if not hasattr(e, "published_parsed"):
-        continue
-    published = datetime(*e.published_parsed[:6], tzinfo=pytz.utc).astimezone(TIMEZONE)
-    if published < cutoff:
-        continue
-    title = getattr(e, "title", "").strip()
-    link = getattr(e, "link", "").strip()
-    if not title or not link:
-        continue
-    items.append((published, title, link))
-
+# -----------------------------
+# 유틸: 언론사 분리
+# -----------------------------
 def split_source(title: str):
     """
     제목 끝의 ' - 언론사' 또는 ' | 언론사' 형태를 분리.
@@ -41,7 +31,6 @@ def split_source(title: str):
     t = title.strip()
     t = re.sub(r"\s+", " ", t)
 
-    # 끝부분 구분자(-, |, –) 뒤 1~30자(언론사명으로 가정)
     m = re.search(r"\s*[-|–]\s*([^-|–]{1,30})$", t)
     if m:
         source = m.group(1).strip()
@@ -49,27 +38,88 @@ def split_source(title: str):
         return base, source
     return t, ""
 
+# -----------------------------
+# 유틸: 토크나이즈 + 유사도
+# -----------------------------
+def tokenize_ko(s: str) -> list[str]:
+    # 괄호/특수문자 제거, 한글/영문/숫자만 남김
+    s = re.sub(r"[\[\]\(\)【】<>\"'“”‘’]", " ", s)
+    s = re.sub(r"[^0-9A-Za-z가-힣\s]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip().lower()
 
-seen = set()
-deduped = []
+    tokens = s.split()
 
-for published, title, link in items:
-    base, source = split_source(title)
-    key = base  # 중복 판정은 언론사 제거된 base 제목 기준
-    if key in seen:
+    # 너무 흔한 단어 제거(필요 시 추가)
+    stop = {"관련", "속보", "단독", "종합", "영상", "포토", "기자", "뉴스"}
+    tokens = [t for t in tokens if t not in stop and len(t) >= 2]
+    return tokens
+
+def jaccard(a: set[str], b: set[str]) -> float:
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+# -----------------------------
+# 1) RSS 수집
+# -----------------------------
+items_raw = []
+for e in getattr(feed, "entries", []):
+    dt_struct = getattr(e, "published_parsed", None) or getattr(e, "updated_parsed", None)
+    if not dt_struct:
         continue
-    seen.add(key)
-    # items를 (published, base_title, link, source) 형태로 확장
+
+    published = datetime(*dt_struct[:6], tzinfo=pytz.utc).astimezone(TIMEZONE)
+    if published < cutoff:
+        continue
+
+    title = getattr(e, "title", "").strip()
+    link = getattr(e, "link", "").strip()
+    if not title or not link:
+        continue
+
+    items_raw.append((published, title, link))
+
+# -----------------------------
+# 2) 강화 중복 제거(유사도)
+# -----------------------------
+SIM_THRESHOLD = 0.58  # 중복이 너무 많을 때는 0.55~0.60 권장
+
+deduped = []
+seen_keys = []  # [(token_set, date_ymd), ...]
+
+for published, title, link in items_raw:
+    base, source = split_source(title)
+
+    # 같은 날(또는 1일 차이)만 비교: 과도 병합 방지
+    day_key = published.date()
+
+    tok = set(tokenize_ko(base))
+    if not tok:
+        # 토큰이 비면(극단적으로 짧은 제목) 그냥 통과
+        deduped.append((published, base, link, source))
+        continue
+
+    is_dup = False
+    for prev_tok, prev_day in seen_keys:
+        if abs((day_key - prev_day).days) > 1:
+            continue
+        if jaccard(tok, prev_tok) >= SIM_THRESHOLD:
+            is_dup = True
+            break
+
+    if is_dup:
+        continue
+
+    seen_keys.append((tok, day_key))
     deduped.append((published, base, link, source))
 
-items = deduped
+items = sorted(deduped, reverse=True)
 
-
-
-items.sort(reverse=True)
-
+# -----------------------------
+# 3) HTML 생성
+# -----------------------------
 def render():
-    title = f"마약류 일일 브리핑 ({now.strftime('%Y-%m-%d')} KST)"
+    page_title = f"마약류 일일 브리핑 ({now.strftime('%Y-%m-%d')} KST)"
     updated = now.strftime("%Y-%m-%d %H:%M")
 
     head = f"""<!doctype html>
@@ -77,7 +127,7 @@ def render():
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{html.escape(title)}</title>
+  <title>{html.escape(page_title)}</title>
   <style>
     body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; line-height: 1.5; }}
     .meta {{ color: #666; font-size: 12px; margin-bottom: 16px; }}
@@ -110,6 +160,7 @@ def render():
                 f"{html.escape(t)}</a>{badge}<span class=\"time\">({html.escape(pub_s)})</span></li>\n"
             )
         body += "  </ul>\n"
+
     tail = """
 </body>
 </html>
@@ -120,4 +171,4 @@ out_path = "docs/index.html"
 with open(out_path, "w", encoding="utf-8") as f:
     f.write(render())
 
-print(f"Wrote {out_path} with {len(items)} items.")
+print(f"Wrote {out_path} with {len(items)} items. (raw: {len(items_raw)})")

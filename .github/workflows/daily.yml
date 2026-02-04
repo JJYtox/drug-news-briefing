@@ -1,4 +1,6 @@
 name: Daily Briefing Page
+run-name: "Daily Briefing • ${{ github.event_name }} • ${{ github.run_id }}"
+
 
 on:
   schedule:

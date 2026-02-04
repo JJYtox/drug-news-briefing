@@ -4,7 +4,7 @@ run-name: "Daily Briefing • ${{ github.event_name }} • ${{ github.run_id }}"
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "50 23 * * *"  # UTC 23:50 = KST 08:50
   workflow_dispatch:
 
 

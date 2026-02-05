@@ -4,6 +4,10 @@ from datetime import datetime, timedelta
 import pytz
 import html
 import re
+import json
+import hashlib
+import requests
+from bs4 import BeautifulSoup
 
 os.makedirs("docs", exist_ok=True)
 
@@ -13,6 +17,156 @@ RSS_URL = (
     "+AND+(적발+OR+검거+OR+압수+OR+밀수+OR+수사+OR+단속)"
     "&hl=ko&gl=KR&ceid=KR:ko"
 )
+
+SITES = [
+    # SWGDRUG: 'Last Update ...' 문구만 뽑아 지문(fingerprint) 생성
+    {"name": "SWGDRUG Bulletins", "mode": "html_regex", "url": "https://www.swgdrug.org/bulletin.htm",
+     "patterns": [r"Last\s+Update\s+[A-Za-z]+\s+\d{4}"]},
+
+    {"name": "SWGDRUG Approved Recommendations", "mode": "html_regex", "url": "https://www.swgdrug.org/approved.htm",
+     "patterns": [r"Last\s+Update\s+[A-Za-z]+\s+\d{4}", r"Edition\s+\d+(\.\d+)?\s*\([0-9A-Za-z\-]+\)"]},
+
+    {"name": "SWGDRUG Monographs", "mode": "html_regex", "url": "https://www.swgdrug.org/monographs.htm",
+     "patterns": [r"Last\s+Update\s+[A-Za-z]+\s+\d{4}"]},
+
+    # Cayman CSL: 페이지에서 'Version' / 'Change log' 관련 키워드 주변 텍스트를 뽑아 지문 생성
+    {"name": "Cayman CSL (Library Update)", "mode": "html_regex", "url": "https://www.caymanchem.com/forensics/publications/csl",
+     "patterns": [r"Version", r"change\s+log", r"Release", r"updated", r"added"]},
+
+    # Cayman New products: 상단 일부 제품/Item No. 추출(가능할 때) → 불가하면 페이지 본문 해시로 대체
+    {"name": "Cayman New Products (Forensics search)", "mode": "cayman_product_list", "url": "https://www.caymanchem.com/forensics/search/productSearch"},
+]
+
+TIMEOUT = 25
+UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36"}
+
+def sha(s: str) -> str:
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+def fetch_html(url: str) -> str:
+    r = requests.get(url, headers=UA, timeout=TIMEOUT)
+    r.raise_for_status()
+    return r.text
+
+def html_text_compact(html_text: str) -> str:
+    soup = BeautifulSoup(html_text, "html.parser")
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
+    text = soup.get_text(" ", strip=True)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+def fingerprint_html_regex(url: str, patterns: list[str]) -> tuple[str, dict]:
+    html_raw = fetch_html(url)
+    text = html_text_compact(html_raw)
+    hits = []
+    for p in patterns:
+        m = re.search(p, text, flags=re.IGNORECASE)
+        hits.append(m.group(0) if m else "")
+    key = " | ".join(hits)
+    # 패턴이 하나도 안 잡히면(사이트 구조 변경 등) 전체 텍스트 일부로 폴백
+    if not key.strip():
+        key = text[:20000]
+    return sha(key), {"matches": hits}
+
+def fingerprint_cayman_product_list(url: str) -> tuple[str, dict]:
+    html_raw = fetch_html(url)
+    text = html_text_compact(html_raw)
+
+    # "Item No." 기반으로 상단 5개 정도만 잡아봄(성공하면 매우 안정적)
+    # (페이지 구조가 바뀌면 매칭이 줄어들 수 있으니 폴백 포함)
+    items = []
+    # 예: "Item No. 44822" 같은 토큰을 기준으로 주변 80자 정도를 뽑음
+    for m in re.finditer(r"Item\s+No\.\s*\d{4,6}", text, flags=re.IGNORECASE):
+        start = max(0, m.start() - 80)
+        end = min(len(text), m.end() + 80)
+        items.append(text[start:end])
+        if len(items) >= 5:
+            break
+
+    if items:
+        key = " || ".join(items)
+        return sha(key), {"top_items": items}
+
+    # 폴백: 텍스트 일부 해시
+    return sha(text[:20000]), {"top_items": []}
+
+# --- 사이트 감시: 전날 상태 읽기 ---
+SITE_STATE_URL = os.environ.get("SITE_STATE_URL", "").strip()
+prev_state = {}
+if SITE_STATE_URL:
+    try:
+        rr = requests.get(SITE_STATE_URL, headers=UA, timeout=TIMEOUT)
+        if rr.status_code == 200:
+            prev_state = rr.json()
+    except Exception:
+        prev_state = {}
+
+site_results = []
+new_state = {}
+
+for s in SITES:
+    name, mode, url = s["name"], s["mode"], s["url"]
+    changed = False
+    detail = {}
+    fp = ""
+
+    try:
+        if mode == "html_regex":
+            fp, detail = fingerprint_html_regex(url, s.get("patterns", []))
+        elif mode == "cayman_product_list":
+            fp, detail = fingerprint_cayman_product_list(url)
+        else:
+            raise ValueError("Unknown mode")
+
+        prev_fp = (prev_state.get(name) or {}).get("fingerprint")
+        changed = (prev_fp != fp) if prev_fp else True  # 첫 실행은 True로 처리(초기 기준선 설정)
+
+    except Exception as e:
+        detail = {"error": str(e)}
+        fp = ""
+        changed = False
+
+    new_state[name] = {
+        "url": url,
+        "mode": mode,
+        "fingerprint": fp,
+        "detail": detail,
+        "checked_at": now.strftime("%Y-%m-%d %H:%M"),
+    }
+    site_results.append({"name": name, "url": url, "changed": changed, "detail": detail})
+
+# 상태 저장(gh-pages에 같이 올라가야 다음날 비교 가능)
+with open("docs/site_state.json", "w", encoding="utf-8") as f:
+    json.dump(new_state, f, ensure_ascii=False, indent=2)
+
+# 이슈 본문(사이트 감시 중심)
+changed_sites = [x for x in site_results if x["changed"]]
+failed_sites = [x for x in site_results if isinstance(x["detail"], dict) and x["detail"].get("error")]
+
+lines = []
+lines.append("## ■ 감시 대상 사이트 업데이트 점검")
+lines.append(f"- 점검 시각: {now.strftime('%Y-%m-%d %H:%M')} (Asia/Seoul)")
+lines.append(f"- 업데이트 감지: **{len(changed_sites)}곳**")
+lines.append(f"- 점검 실패: **{len(failed_sites)}곳**")
+lines.append("")
+
+if not changed_sites:
+    lines.append("> 금일 점검 기준으로 ‘새 업데이트 감지’된 사이트가 없습니다.")
+else:
+    lines.append("### 업데이트 감지 목록")
+    for x in changed_sites:
+        lines.append(f"- **{x['name']}**: {x['url']}")
+
+if failed_sites:
+    lines.append("")
+    lines.append("### 점검 실패(접속/파싱 오류)")
+    for x in failed_sites:
+        lines.append(f"- **{x['name']}**: {x['detail'].get('error','')}")
+
+with open("docs/site_monitor.md", "w", encoding="utf-8") as f:
+    f.write("\n".join(lines) + "\n")
+
 
 TIMEZONE = pytz.timezone("Asia/Seoul")
 now = datetime.now(TIMEZONE)
@@ -114,6 +268,8 @@ for published, title, link in items_raw:
     deduped.append((published, base, link, source))
 
 items = sorted(deduped, reverse=True)
+
+
 
 # -----------------------------
 # 3) HTML 생성

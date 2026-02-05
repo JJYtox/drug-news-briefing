@@ -34,3 +34,16 @@ jobs:
           git diff --cached --quiet && echo "No changes" && exit 0
           git commit -m "Update briefing page"
           git push
+
+            - name: Show python file head (verify version)
+        run: |
+          echo "=== news_briefing.py (first 60 lines) ==="
+          sed -n '1,60p' news_briefing.py
+
+      - name: Check docs outputs
+        run: |
+          echo "=== ls docs ==="
+          ls -al docs || true
+          echo "=== find docs ==="
+          find docs -maxdepth 2 -type f -print || true
+

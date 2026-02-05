@@ -1,12 +1,10 @@
 name: Daily Briefing Page
 run-name: "Daily Briefing • ${{ github.event_name }} • ${{ github.run_id }}"
 
-
 on:
   schedule:
     - cron: "50 23 * * *"  # UTC 23:50 = KST 08:50
   workflow_dispatch:
-
 
 concurrency:
   group: daily-briefing
@@ -14,6 +12,7 @@ concurrency:
 
 permissions:
   contents: write
+  issues: write
 
 jobs:
   build:
@@ -30,12 +29,17 @@ jobs:
           python-version: "3.10"
 
       - name: Install deps
-        run: pip install feedparser pytz
+        run: pip install feedparser pytz requests beautifulsoup4
 
       - name: Generate page
+        env:
+          SITE_STATE_URL: https://raw.githubusercontent.com/JJYtox/drug-news-briefing/gh-pages/site_state.json
         run: python news_briefing.py
 
-      # docs/ 내용을 gh-pages 브랜치 루트로 배포 (브랜치 충돌 원천 제거)
+      - name: Debug event
+        run: echo "event=${GITHUB_EVENT_NAME}"
+
+      # docs/ 내용을 gh-pages 브랜치 루트로 배포
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:
@@ -43,5 +47,18 @@ jobs:
           publish_branch: gh-pages
           publish_dir: ./docs
           force_orphan: true
-      - name: Debug event
-        run: echo "event=${GITHUB_EVENT_NAME}"
+
+      - name: Create daily issue (site monitoring)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DATE_KST=$(TZ=Asia/Seoul date +'%Y-%m-%d')
+          TITLE="감시 사이트 업데이트 점검 (${DATE_KST})"
+
+          EXIST=$(gh issue list --search "$TITLE in:title" --json number --jq '.[0].number')
+          if [ -n "$EXIST" ]; then
+            echo "Issue already exists: #$EXIST"
+            exit 0
+          fi
+
+          gh issue create --title "$TITLE" --body-file docs/site_monitor.md

@@ -48,17 +48,20 @@ jobs:
           publish_dir: ./docs
           force_orphan: true
 
-      - name: Create daily issue (site monitoring)
+      - name: Create issue only when change/failure
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           DATE_KST=$(TZ=Asia/Seoul date +'%Y-%m-%d')
-          TITLE="감시 사이트 업데이트 점검 (${DATE_KST})"
+          UPDATED=$(python -c "import json;print(json.load(open('docs/monitor_summary.json','r',encoding='utf-8')).get('updated',0))")
+          FAILED=$(python -c "import json;print(json.load(open('docs/monitor_summary.json','r',encoding='utf-8')).get('failed',0))")
 
-          EXIST=$(gh issue list --search "$TITLE in:title" --json number --jq '.[0].number')
-          if [ -n "$EXIST" ]; then
-            echo "Issue already exists: #$EXIST"
+          if [ "$UPDATED" -eq 0 ] && [ "$FAILED" -eq 0 ]; then
+            echo "No update and no failure -> skip issue."
             exit 0
           fi
 
+          TITLE="감시 사이트 업데이트 점검 (${DATE_KST})"
+          EXIST=$(gh issue list --search "$TITLE in:title" --json number --jq '.[0].number')
+          if [ -n "$EXIST" ]; then exit 0; fi
           gh issue create --title "$TITLE" --body-file docs/site_monitor.md

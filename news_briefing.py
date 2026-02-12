@@ -88,15 +88,22 @@ def load_prev_state() -> dict:
       1) SITE_STATE_URL(gh-pages raw)에서 전날 상태 로드 시도
       2) 로컬 docs/site_state.json
       3) 없으면 빈 dict
+
+    주의:
+      저장 구조가 {"meta":..., "sites":{...}} 이므로,
+      항상 sites를 반환하도록 보정한다.
     """
     prev = safe_get_json(SITE_STATE_URL) if SITE_STATE_URL else None
     if isinstance(prev, dict):
-        return prev
+        return prev.get("sites", prev)
+
     try:
         with open(STATE_JSON, "r", encoding="utf-8") as f:
-            return json.load(f)
+            obj = json.load(f)
+            return obj.get("sites", obj)
     except Exception:
         return {}
+
 
 
 def write_json(path: str, obj: dict) -> None:
@@ -374,6 +381,79 @@ def monitor_one(
     prev_hash = str(prev_entry.get("hash", "") or "")
 
     try:
+        # ✅ Cayman New Products: JSON API 기반 감시
+        if spec.key == "cayman_new_products":
+            r = session.get(spec.url, timeout=timeout)
+            status = r.status_code
+            if status != 200:
+                return {
+                    "key": spec.key,
+                    "name": spec.name,
+                    "url": spec.url,
+                    "ok": False,
+                    "changed": False,
+                    "error": f"HTTP {status}",
+                    "token_count": 0,
+                    "tokens_head": [],
+                    "hash": "",
+                    "prev_hash": prev_hash,
+                    "fetched_kst": now_kst,
+                }
+
+            data = r.json()
+
+            # JSON에서 안정 토큰 추출(제품 id/itemNo/sku + total/count)
+            def walk(obj):
+                out = []
+                if isinstance(obj, dict):
+                    for k, v in obj.items():
+                        if k in ("itemNo", "item_no", "sku", "id", "productId", "total", "count"):
+                            if v is not None:
+                                s = str(v).strip()
+                                if s:
+                                    out.append(f"{k}:{s}")  # 키 포함(충돌/중복 방지)
+                        out.extend(walk(v))
+                elif isinstance(obj, list):
+                    for it in obj:
+                        out.extend(walk(it))
+                return out
+
+            tokens = sorted(set(walk(data)))[:300]
+
+            if not tokens:
+                return {
+                    "key": spec.key,
+                    "name": spec.name,
+                    "url": spec.url,
+                    "ok": False,
+                    "changed": False,
+                    "error": "Token extraction empty (JSON)",
+                    "token_count": 0,
+                    "tokens_head": [],
+                    "hash": "",
+                    "prev_hash": prev_hash,
+                    "fetched_kst": now_kst,
+                }
+
+            fp_text = "\n".join(tokens)
+            cur_hash = sha256_hex(fp_text)
+            changed = (prev_hash != "") and (cur_hash != prev_hash)
+
+            return {
+                "key": spec.key,
+                "name": spec.name,
+                "url": spec.url,
+                "ok": True,
+                "changed": changed,
+                "error": "",
+                "token_count": len(tokens),
+                "tokens_head": tokens[:12],
+                "hash": cur_hash,
+                "prev_hash": prev_hash,
+                "fetched_kst": now_kst,
+            }
+
+        # ---- 기존 HTML 감시 로직 ----
         r = session.get(spec.url, timeout=timeout)
         status = r.status_code
         if status != 200:
@@ -445,6 +525,7 @@ def monitor_one(
             "prev_hash": prev_hash,
             "fetched_kst": now_kst,
         }
+
 
 
 def run_monitoring(session: requests.Session, prev_state: dict) -> Tuple[List[dict], dict, dict]:

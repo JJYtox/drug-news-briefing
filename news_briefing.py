@@ -295,6 +295,10 @@ def render():
     page_title = f"마약류 일일 브리핑 ({now.strftime('%Y-%m-%d')} KST)"
     updated = now.strftime("%Y-%m-%d %H:%M")
 
+    # "변경 없음이면 자동 접기" 조건
+    has_site_change = (len(changed_sites) > 0) or (len(failed_sites) > 0)
+    details_open_attr = " open" if has_site_change else ""
+
     head = f"""<!doctype html>
 <html lang="ko">
 <head>
@@ -310,35 +314,99 @@ def render():
     a:hover {{ text-decoration: underline; }}
     .time {{ color: #777; font-size: 12px; margin-left: 6px; }}
     .empty {{ color: #444; padding: 12px; background: #f6f6f6; border-radius: 8px; }}
+    .card {{ padding: 12px; background: #f6f6f6; border-radius: 8px; margin: 12px 0 0 0; }}
+    .sub {{ color: #666; font-size: 12px; margin-top: 6px; }}
+    .ok {{ color: #1a7f37; font-weight: 600; }}
+    .warn {{ color: #b42318; font-weight: 600; }}
+    details {{ margin-top: 22px; }}
+    summary {{ cursor: pointer; font-weight: 700; }}
+    .tag {{ display:inline-block; border:1px solid #ddd; border-radius:10px; padding:1px 8px; font-size:12px; color:#555; margin-left:6px; }}
   </style>
 </head>
 <body>
+"""
+
+    # -----------------------------
+    # (1) 뉴스 섹션: 상단
+    # -----------------------------
+    news_head = f"""
   <h2>■ 최근 24시간 마약류 관련 주요 기사</h2>
   <div class="meta">업데이트: {html.escape(updated)} (Asia/Seoul 기준)</div>
 """
+
     if not items:
-        body = """  <div class="empty">최근 24시간 기준으로 수집된 기사가 없습니다.</div>\n"""
+        news_body = """  <div class="empty">최근 24시간 기준으로 수집된 기사가 없습니다.</div>\n"""
     else:
-        body = "  <ul>\n"
+        news_body = "  <ul>\n"
         for pub, t, link, source in items:
             pub_s = pub.strftime("%Y-%m-%d %H:%M")
             badge = (
-                f" <span style='border:1px solid #ddd;border-radius:10px;"
-                f"padding:1px 8px;font-size:12px;color:#555;'>"
-                f"{html.escape(source)}</span>"
+                f" <span class='tag'>{html.escape(source)}</span>"
                 if source else ""
             )
-            body += (
+            news_body += (
                 f"    <li><a href=\"{html.escape(link)}\" target=\"_blank\" rel=\"noopener noreferrer\">"
                 f"{html.escape(t)}</a>{badge}<span class=\"time\">({html.escape(pub_s)})</span></li>\n"
             )
-        body += "  </ul>\n"
+        news_body += "  </ul>\n"
+
+    # -----------------------------
+    # (2) 사이트 감시 섹션: 하단 + 변경 없음이면 자동 접기
+    # -----------------------------
+    # summary 문구에 핵심 수치 표시
+    summary_line = (
+        f"■ 감시 대상 사이트 업데이트 점검 "
+        f"(업데이트 {len(changed_sites)}곳 / 실패 {len(failed_sites)}곳)"
+    )
+
+    site_block = f"""
+  <details{details_open_attr}>
+    <summary>{html.escape(summary_line)}</summary>
+    <div class="card">
+      <div class="sub">점검 시각: {html.escape(updated)} (Asia/Seoul)</div>
+      <div style="margin-top:8px;">
+        업데이트 감지:
+        <span class="{'warn' if len(changed_sites) else 'ok'}">{len(changed_sites)}곳</span>
+        /
+        점검 실패:
+        <span class="{'warn' if len(failed_sites) else 'ok'}">{len(failed_sites)}곳</span>
+      </div>
+"""
+
+    if not changed_sites and not failed_sites:
+        site_block += """      <div class="sub" style="margin-top:10px;">변경 없음(업데이트 감지 및 점검 실패 없음)</div>\n"""
+    else:
+        if changed_sites:
+            site_block += "      <div class='sub' style='margin-top:10px;'>업데이트 감지 목록</div>\n"
+            site_block += "      <ul>\n"
+            for x in changed_sites:
+                site_block += (
+                    f"        <li><a href=\"{html.escape(x['url'])}\" target=\"_blank\" rel=\"noopener noreferrer\">"
+                    f"{html.escape(x['name'])}</a></li>\n"
+                )
+            site_block += "      </ul>\n"
+
+        if failed_sites:
+            site_block += "      <div class='sub' style='margin-top:10px;'>점검 실패(접속/파싱 오류)</div>\n"
+            site_block += "      <ul>\n"
+            for x in failed_sites:
+                err = x["detail"].get("error", "") if isinstance(x.get("detail"), dict) else ""
+                site_block += (
+                    f"        <li>{html.escape(x['name'])}<span class='tag'>ERROR</span>"
+                    f"<div class='sub'>{html.escape(err)}</div></li>\n"
+                )
+            site_block += "      </ul>\n"
+
+    site_block += """    </div>
+  </details>
+"""
 
     tail = """
 </body>
 </html>
 """
-    return head + body + tail
+
+    return head + news_head + news_body + site_block + tail
 
 
 out_path = "docs/index.html"

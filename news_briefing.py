@@ -400,7 +400,41 @@ def monitor_one(
                     "fetched_kst": now_kst,
                 }
 
-            data = r.json()
+            ct = (r.headers.get("Content-Type") or "").lower()
+            body_head = (r.text or "")[:200].replace("\n", " ").strip()
+
+            if "application/json" not in ct:
+                return {
+                    "key": spec.key,
+                    "name": spec.name,
+                    "url": spec.url,
+                    "ok": False,
+                    "changed": False,
+                    "error": f"Non-JSON response (Content-Type={ct}) head={body_head}",
+                    "token_count": 0,
+                    "tokens_head": [],
+                    "hash": "",
+                    "prev_hash": prev_hash,
+                    "fetched_kst": now_kst,
+                }
+
+            try:
+                data = r.json()
+            except Exception as je:
+                return {
+                    "key": spec.key,
+                    "name": spec.name,
+                    "url": spec.url,
+                    "ok": False,
+                    "changed": False,
+                    "error": f"JSON parse failed: {type(je).__name__} head={body_head}",
+                    "token_count": 0,
+                    "tokens_head": [],
+                    "hash": "",
+                    "prev_hash": prev_hash,
+                    "fetched_kst": now_kst,
+                }
+
 
             # JSON에서 안정 토큰 추출(제품 id/itemNo/sku + total/count)
             def walk(obj):

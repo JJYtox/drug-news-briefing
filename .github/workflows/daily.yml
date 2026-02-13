@@ -29,7 +29,9 @@ jobs:
           python-version: "3.10"
 
       - name: Install deps
-        run: pip install feedparser pytz requests beautifulsoup4
+        run: |
+          pip install feedparser pytz requests beautifulsoup4 playwright
+          python -m playwright install chromium --with-deps
 
       - name: Generate page
         env:

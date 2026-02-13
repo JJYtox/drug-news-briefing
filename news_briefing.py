@@ -401,8 +401,10 @@ def monitor_one(
                 }
 
             ct = (r.headers.get("Content-Type") or "").lower()
-            body_head = (r.text or "")[:200].replace("\n", " ").strip()
+            head = (r.text or "")[:120].replace("\n", " ").replace("\r", " ").strip()
+            print(f"[DEBUG] {spec.key} HTTP={status} CT={ct} HEAD={head}")
 
+            # JSON이 아니면 바로 FAIL 처리(원인 기록)
             if "application/json" not in ct:
                 return {
                     "key": spec.key,
@@ -410,7 +412,7 @@ def monitor_one(
                     "url": spec.url,
                     "ok": False,
                     "changed": False,
-                    "error": f"Non-JSON response (Content-Type={ct}) head={body_head}",
+                    "error": f"Non-JSON (HTTP {status}, CT={ct}) HEAD={head}",
                     "token_count": 0,
                     "tokens_head": [],
                     "hash": "",
@@ -427,13 +429,14 @@ def monitor_one(
                     "url": spec.url,
                     "ok": False,
                     "changed": False,
-                    "error": f"JSON parse failed: {type(je).__name__} head={body_head}",
+                    "error": f"JSON parse failed (HTTP {status}, CT={ct}) {type(je).__name__} HEAD={head}",
                     "token_count": 0,
                     "tokens_head": [],
                     "hash": "",
                     "prev_hash": prev_hash,
                     "fetched_kst": now_kst,
                 }
+
 
 
             # JSON에서 안정 토큰 추출(제품 id/itemNo/sku + total/count)
@@ -504,6 +507,11 @@ def monitor_one(
                 "prev_hash": prev_hash,
                 "fetched_kst": now_kst,
             }
+
+        ct = (r.headers.get("Content-Type") or "").lower()
+        head = (r.text or "")[:120].replace("\n", " ").replace("\r", " ").strip()
+        if spec.key in ("cayman_csl", "cayman_new_products"):
+            print(f"[DEBUG] {spec.key} HTTP={status} CT={ct} HEAD={head}")
 
         normalized = normalize_html(r.text)
 

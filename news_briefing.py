@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+        #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 import os
@@ -330,6 +330,88 @@ def extractor_swgdrug(normalized_html: str) -> List[str]:
     ]
     return extract_by_regex_list(normalized_html, patterns, max_tokens=140)
 
+def extractor_cayman_new_products_rendered(url: str) -> List[str]:
+    """
+    Cayman New Products는 requests로 API/JSON 호출이 HTML로 회수되므로,
+    Playwright로 렌더링 후 Item No 기반 토큰을 생성한다.
+    """
+    from playwright.sync_api import sync_playwright
+    import re
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto(url, wait_until="networkidle", timeout=60000)
+        html = page.content()
+        browser.close()
+
+    tokens = re.findall(r"\bItem\s*No\.?\s*[:#]?\s*(\d{4,8})\b", html, flags=re.I)
+
+    uniq, seen = [], set()
+    for t in tokens:
+        if t in seen:
+            continue
+        seen.add(t)
+        uniq.append(t)
+        if len(uniq) >= 200:
+            break
+    return uniq
+
+def extractor_cayman_csl_version_additions(normalized_html: str) -> List[str]:
+    """
+    CSL Library 페이지에서 'Version info' 및 'Additions' 섹션의 텍스트만 추출하여 토큰화.
+    """
+    soup = BeautifulSoup(normalized_html, "html.parser")
+
+    def collect_section_text(title: str) -> str:
+        # 1) heading(h1~h6)에서 title 포함하는 요소 찾기
+        heading = None
+        for tag in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
+            t = tag.get_text(" ", strip=True)
+            if t and title.lower() in t.lower():
+                heading = tag
+                break
+
+        if heading:
+            # heading 이후 다음 heading 전까지의 텍스트 수집
+            texts = []
+            for sib in heading.find_all_next():
+                if sib.name in ["h1", "h2", "h3", "h4", "h5", "h6"]:
+                    break
+                if sib.name in ["script", "style", "noscript"]:
+                    continue
+                txt = sib.get_text(" ", strip=True) if hasattr(sib, "get_text") else ""
+                if txt:
+                    texts.append(txt)
+                if len(" ".join(texts)) > 2000:  # 과도한 수집 제한
+                    break
+            return " ".join(texts).strip()
+
+        # 2) fallback: 원문에서 title 근처 1200자 슬라이스
+        m = re.search(rf"({re.escape(title)}.{0,1200})", normalized_html, flags=re.I)
+        if m:
+            # 태그 제거 후 텍스트화(간단)
+            chunk = re.sub(r"<[^>]+>", " ", m.group(1))
+            chunk = re.sub(r"\s+", " ", chunk).strip()
+            return chunk
+
+        return ""
+
+    vi = collect_section_text("Version info")
+    ad = collect_section_text("Additions")
+
+    # 토큰 구성: 비교 안정성을 위해 키를 붙여 구분
+    tokens = []
+    if vi:
+        tokens.append("Version info:" + vi)
+    if ad:
+        tokens.append("Additions:" + ad)
+
+    # 너무 길면 해시가 불안정해질 수 있어 절단(운영 안정성)
+    tokens = [t[:2000] for t in tokens]
+
+    # 최소 1개라도 있어야 함
+    return tokens
 
 def extractor_cayman_itemno(normalized_html: str) -> List[str]:
     """
@@ -381,81 +463,9 @@ def monitor_one(
     prev_hash = str(prev_entry.get("hash", "") or "")
 
     try:
-        # ✅ Cayman New Products: JSON API 기반 감시
+        # ✅ Cayman New Products: Playwright 렌더링 기반 감시
         if spec.key == "cayman_new_products":
-            r = session.get(spec.url, timeout=timeout)
-            status = r.status_code
-            if status != 200:
-                return {
-                    "key": spec.key,
-                    "name": spec.name,
-                    "url": spec.url,
-                    "ok": False,
-                    "changed": False,
-                    "error": f"HTTP {status}",
-                    "token_count": 0,
-                    "tokens_head": [],
-                    "hash": "",
-                    "prev_hash": prev_hash,
-                    "fetched_kst": now_kst,
-                }
-
-            ct = (r.headers.get("Content-Type") or "").lower()
-            head = (r.text or "")[:120].replace("\n", " ").replace("\r", " ").strip()
-            print(f"[DEBUG] {spec.key} HTTP={status} CT={ct} HEAD={head}")
-
-            # JSON이 아니면 바로 FAIL 처리(원인 기록)
-            if "application/json" not in ct:
-                return {
-                    "key": spec.key,
-                    "name": spec.name,
-                    "url": spec.url,
-                    "ok": False,
-                    "changed": False,
-                    "error": f"Non-JSON (HTTP {status}, CT={ct}) HEAD={head}",
-                    "token_count": 0,
-                    "tokens_head": [],
-                    "hash": "",
-                    "prev_hash": prev_hash,
-                    "fetched_kst": now_kst,
-                }
-
-            try:
-                data = r.json()
-            except Exception as je:
-                return {
-                    "key": spec.key,
-                    "name": spec.name,
-                    "url": spec.url,
-                    "ok": False,
-                    "changed": False,
-                    "error": f"JSON parse failed (HTTP {status}, CT={ct}) {type(je).__name__} HEAD={head}",
-                    "token_count": 0,
-                    "tokens_head": [],
-                    "hash": "",
-                    "prev_hash": prev_hash,
-                    "fetched_kst": now_kst,
-                }
-
-
-
-            # JSON에서 안정 토큰 추출(제품 id/itemNo/sku + total/count)
-            def walk(obj):
-                out = []
-                if isinstance(obj, dict):
-                    for k, v in obj.items():
-                        if k in ("itemNo", "item_no", "sku", "id", "productId", "total", "count"):
-                            if v is not None:
-                                s = str(v).strip()
-                                if s:
-                                    out.append(f"{k}:{s}")  # 키 포함(충돌/중복 방지)
-                        out.extend(walk(v))
-                elif isinstance(obj, list):
-                    for it in obj:
-                        out.extend(walk(it))
-                return out
-
-            tokens = sorted(set(walk(data)))[:300]
+            tokens = extractor_cayman_new_products_rendered(spec.url)
 
             if not tokens:
                 return {
@@ -464,7 +474,7 @@ def monitor_one(
                     "url": spec.url,
                     "ok": False,
                     "changed": False,
-                    "error": "Token extraction empty (JSON)",
+                    "error": "Rendered token extraction empty",
                     "token_count": 0,
                     "tokens_head": [],
                     "hash": "",
@@ -490,7 +500,7 @@ def monitor_one(
                 "fetched_kst": now_kst,
             }
 
-        # ---- 기존 HTML 감시 로직 ----
+        # ---- 그 외(HTML 기반 감시) ----
         r = session.get(spec.url, timeout=timeout)
         status = r.status_code
         if status != 200:
@@ -507,11 +517,6 @@ def monitor_one(
                 "prev_hash": prev_hash,
                 "fetched_kst": now_kst,
             }
-
-        ct = (r.headers.get("Content-Type") or "").lower()
-        head = (r.text or "")[:120].replace("\n", " ").replace("\r", " ").strip()
-        if spec.key in ("cayman_csl", "cayman_new_products"):
-            print(f"[DEBUG] {spec.key} HTTP={status} CT={ct} HEAD={head}")
 
         normalized = normalize_html(r.text)
 
@@ -536,7 +541,6 @@ def monitor_one(
 
         fp_text = "\n".join(tokens)
         cur_hash = sha256_hex(fp_text)
-
         changed = (prev_hash != "") and (cur_hash != prev_hash)
 
         return {
@@ -582,16 +586,16 @@ def run_monitoring(session: requests.Session, prev_state: dict) -> Tuple[List[di
             key="cayman_csl",
             name="Cayman CSL Library",
             url="https://www.caymanchem.com/forensics/publications/csl",
-            extractor=extractor_cayman_itemno,
-            fallback_extractor=extractor_cayman_fallback,
+            extractor=extractor_cayman_csl_version_additions,
         ),
+
         MonitorSpec(
             key="cayman_new_products",
             name="Cayman New Products",
             url="https://www.caymanchem.com/forensics/search/productSearch",
-            extractor=extractor_cayman_itemno,
-            fallback_extractor=extractor_cayman_fallback,
+            extractor=lambda html: [],  # 사용 안 함(아래 monitor_one 분기에서 return)
         ),
+
     ]
 
     results: List[dict] = []

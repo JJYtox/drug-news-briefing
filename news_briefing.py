@@ -357,61 +357,14 @@ def extractor_cayman_new_products_rendered(url: str) -> List[str]:
             break
     return uniq
 
-def extractor_cayman_csl_version_additions(normalized_html: str) -> List[str]:
+def extractor_cayman_csl_changelog(raw_text: str, head_lines: int = 120) -> List[str]:
     """
-    CSL Library 페이지에서 'Version info' 및 'Additions' 섹션의 텍스트만 추출하여 토큰화.
+    Cayman CSL은 ChangeLog.txt 원문 상단 N줄을 fingerprint 토큰으로 사용한다.
     """
-    soup = BeautifulSoup(normalized_html, "html.parser")
+    normalized_text = raw_text.replace("\r\n", "\n").replace("\r", "\n")
+    lines = [line.strip() for line in normalized_text.split("\n") if line.strip()]
 
-    def collect_section_text(title: str) -> str:
-        # 1) heading(h1~h6)에서 title 포함하는 요소 찾기
-        heading = None
-        for tag in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
-            t = tag.get_text(" ", strip=True)
-            if t and title.lower() in t.lower():
-                heading = tag
-                break
-
-        if heading:
-            # heading 이후 다음 heading 전까지의 텍스트 수집
-            texts = []
-            for sib in heading.find_all_next():
-                if sib.name in ["h1", "h2", "h3", "h4", "h5", "h6"]:
-                    break
-                if sib.name in ["script", "style", "noscript"]:
-                    continue
-                txt = sib.get_text(" ", strip=True) if hasattr(sib, "get_text") else ""
-                if txt:
-                    texts.append(txt)
-                if len(" ".join(texts)) > 2000:  # 과도한 수집 제한
-                    break
-            return " ".join(texts).strip()
-
-        # 2) fallback: 원문에서 title 근처 1200자 슬라이스
-        m = re.search(rf"({re.escape(title)}.{0,1200})", normalized_html, flags=re.I)
-        if m:
-            # 태그 제거 후 텍스트화(간단)
-            chunk = re.sub(r"<[^>]+>", " ", m.group(1))
-            chunk = re.sub(r"\s+", " ", chunk).strip()
-            return chunk
-
-        return ""
-
-    vi = collect_section_text("Version info")
-    ad = collect_section_text("Additions")
-
-    # 토큰 구성: 비교 안정성을 위해 키를 붙여 구분
-    tokens = []
-    if vi:
-        tokens.append("Version info:" + vi)
-    if ad:
-        tokens.append("Additions:" + ad)
-
-    # 너무 길면 해시가 불안정해질 수 있어 절단(운영 안정성)
-    tokens = [t[:2000] for t in tokens]
-
-    # 최소 1개라도 있어야 함
-    return tokens
+    return lines[:head_lines]
 
 def extractor_cayman_itemno(normalized_html: str) -> List[str]:
     """
@@ -475,6 +428,63 @@ def monitor_one(
                     "ok": False,
                     "changed": False,
                     "error": "Rendered token extraction empty",
+                    "token_count": 0,
+                    "tokens_head": [],
+                    "hash": "",
+                    "prev_hash": prev_hash,
+                    "fetched_kst": now_kst,
+                }
+
+            fp_text = "\n".join(tokens)
+            cur_hash = sha256_hex(fp_text)
+            changed = (prev_hash != "") and (cur_hash != prev_hash)
+
+            return {
+                "key": spec.key,
+                "name": spec.name,
+                "url": spec.url,
+                "ok": True,
+                "changed": changed,
+                "error": "",
+                "token_count": len(tokens),
+                "tokens_head": tokens[:12],
+                "hash": cur_hash,
+                "prev_hash": prev_hash,
+                "fetched_kst": now_kst,
+            }
+
+        # ✅ Cayman CSL: ChangeLog.txt 상단 N줄 기반 감시
+        if spec.key == "cayman_csl":
+            r = session.get(
+                spec.url,
+                timeout=timeout,
+                headers={"Accept": "text/plain,text/*;q=0.9,*/*;q=0.8"},
+            )
+            if r.status_code != 200:
+                return {
+                    "key": spec.key,
+                    "name": spec.name,
+                    "url": spec.url,
+                    "ok": False,
+                    "changed": False,
+                    "error": f"HTTP {r.status_code}",
+                    "token_count": 0,
+                    "tokens_head": [],
+                    "hash": "",
+                    "prev_hash": prev_hash,
+                    "fetched_kst": now_kst,
+                }
+
+            tokens = extractor_cayman_csl_changelog(r.text, head_lines=120)
+
+            if not tokens:
+                return {
+                    "key": spec.key,
+                    "name": spec.name,
+                    "url": spec.url,
+                    "ok": False,
+                    "changed": False,
+                    "error": "ChangeLog token extraction empty",
                     "token_count": 0,
                     "tokens_head": [],
                     "hash": "",
@@ -585,8 +595,8 @@ def run_monitoring(session: requests.Session, prev_state: dict) -> Tuple[List[di
         MonitorSpec(
             key="cayman_csl",
             name="Cayman CSL Library",
-            url="https://www.caymanchem.com/forensics/publications/csl",
-            extractor=extractor_cayman_csl_version_additions,
+            url="https://cdn.caymanchem.com/cdn/csl/ChangeLog.txt",
+            extractor=lambda html: [],  # 사용 안 함(아래 monitor_one 분기에서 return)
         ),
 
         MonitorSpec(

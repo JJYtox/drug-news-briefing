@@ -1,0 +1,53 @@
+{
+  "meta": {
+    "generated_kst": "2026-02-14T09:03+09:00",
+    "summary": {
+      "date_kst": "2026-02-14",
+      "updated": 1,
+      "failed": 1
+    }
+  },
+  "sites": {
+    "swgdrug_home": {
+      "hash": "4e74b2dae5fa35a8b06b402bf1c9f9e5684a667e6f6a3972c332f0b9b0c7adf3",
+      "token_count": 11,
+      "tokens_head": [
+        "SWGDRUG",
+        "swgdrug",
+        "SWGDRUG Recommendations",
+        "SWGDRUG recommendations",
+        "monographs",
+        "Monographs",
+        "Documents/Drug_App_Documentation_Approved.pdf",
+        "LOGO%20Stuff/Large_Logo%20for%20Web.pdf",
+        "Version 8.2",
+        "Version 3.14",
+        "Version 3.1"
+      ],
+      "fetched_kst": "2026-02-14T09:03+09:00",
+      "url": "https://swgdrug.org/",
+      "name": "SWGDRUG 홈"
+    },
+    "cayman_new_products": {
+      "hash": "dbb4199fcf6c7c323de55c7c3f3186942a41168875b9140ceae1fa0f189fa14c",
+      "token_count": 25,
+      "tokens_head": [
+        "45345",
+        "45343",
+        "44312",
+        "45344",
+        "44840",
+        "44680",
+        "43226",
+        "37905",
+        "44075",
+        "44869",
+        "44945",
+        "44208"
+      ],
+      "fetched_kst": "2026-02-14T09:03+09:00",
+      "url": "https://www.caymanchem.com/forensics/search/productSearch",
+      "name": "Cayman New Products"
+    }
+  }
+}

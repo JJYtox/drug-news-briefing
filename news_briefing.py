@@ -6,9 +6,10 @@ import re
 import json
 import time
 import hashlib
+import difflib
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple, Set
 
 import pytz
 import feedparser
@@ -54,6 +55,7 @@ def build_session() -> requests.Session:
         {
             "User-Agent": "Mozilla/5.0 (compatible; drug-news-briefing/1.0; +https://github.com/)",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
         }
     )
     return s
@@ -71,9 +73,7 @@ def sha256_hex(text: str) -> str:
 
 
 def safe_get_json(session: requests.Session, url: str, timeout: int = 20) -> Optional[dict]:
-    """
-    ✅ session 기반 (retry/backoff 적용)
-    """
+    """session 기반 (retry/backoff 적용)"""
     if not url:
         return None
     try:
@@ -92,9 +92,7 @@ def load_prev_state(session: requests.Session) -> dict:
       2) 로컬 docs/site_state.json
       3) 없으면 빈 dict
 
-    주의:
-      저장 구조가 {"meta":..., "sites":{...}} 이므로,
-      항상 sites를 반환하도록 보정한다.
+    저장 구조가 {"meta":..., "sites":{...}} 이므로 항상 sites를 반환하도록 보정.
     """
     prev = safe_get_json(session, SITE_STATE_URL) if SITE_STATE_URL else None
     if isinstance(prev, dict):
@@ -113,19 +111,20 @@ def write_json(path: str, obj: dict) -> None:
         json.dump(obj, f, ensure_ascii=False, indent=2)
 
 
+def shorten(s: str, max_len: int = 70) -> str:
+    s = (s or "").strip()
+    if len(s) <= max_len:
+        return s
+    return s[: max_len - 1] + "…"
+
+
 # =========================
-# News Briefing (A안: 의존성 없음, 범용 중복 제거)
+# News Briefing (A안: 의존성 없음, 범용 중복 제거 강화)
 # =========================
 def build_google_news_rss_url(query: str, hl: str = "ko", gl: str = "KR", ceid: str = "KR:ko") -> str:
-    # Google News RSS
-    # 예: https://news.google.com/rss/search?q=...&hl=ko&gl=KR&ceid=KR:ko
     from urllib.parse import quote_plus
 
-    return (
-        "https://news.google.com/rss/search?q="
-        + quote_plus(query)
-        + f"&hl={hl}&gl={gl}&ceid={ceid}"
-    )
+    return "https://news.google.com/rss/search?q=" + quote_plus(query) + f"&hl={hl}&gl={gl}&ceid={ceid}"
 
 
 def normalize_title(title: str) -> str:
@@ -139,114 +138,73 @@ def normalize_title(title: str) -> str:
 
 
 def extract_publisher(raw_title: str) -> str:
-    # "제목 - 언론사" 형태에서 언론사 추출
     m = re.search(r"\s+-\s+([^-]{2,40})$", raw_title.strip())
     return m.group(1).strip() if m else ""
 
 
-# --- 범용 강한 정규화(도메인 의존 X) ---
 NEWS_STYLE_NOISE = [
-    "단독",
-    "속보",
-    "전격",
-    "충격",
-    "파문",
-    "논란",
-    "비판",
-    "초비상",
-    "위기",
-    "날벼락",
-    "큰일",
-    "큰일났다",
-    "대참사",
-    "경악",
-    "화들짝",
-    "난리",
-    "전망",
-    "무산",
-    "급증",
-    "급락",
-    "폭등",
-    "폭락",
-    "해체하나",
-    "시즌아웃",
-    "시즌 아웃",
-    "결국",
-    "드디어",
-    "또",
-    "다시",
+    "단독", "속보", "전격", "충격", "파문", "논란", "비판",
+    "초비상", "위기", "날벼락", "대참사", "경악", "난리",
+    "전망", "무산", "급증", "급락", "폭등", "폭락",
+    "결국", "드디어",
+]
+COMMON_FILLERS = [
+    "했다", "한다", "관련", "이유", "사실상", "추정",
+    "가능성", "전면", "공식", "최근", "오늘", "어제", "내일",
 ]
 
-COMMON_FILLERS = [
-    "했다",
-    "한다",
-    "했다가",
-    "한다는",
-    "한다며",
-    "관련",
-    "이유",
-    "사실상",
-    "추정",
-    "가능성",
-    "전면",
-    "공식",
-    "최근",
-    "오늘",
-    "어제",
-    "내일",
-]
 
 def normalize_title_strong(raw_title: str) -> str:
-    """
-    ✅ 범용 중복 제거용: 표현 차이를 크게 줄여 "사건 단위" 비교에 유리하게 만든다.
-    - 언론사 꼬리표 제거/괄호 정리(기존 normalize_title)
-    - 인용부호/특수기호/이모지 제거 강화
-    - 뉴스 문체 수식어/군더더기(도메인 비의존) 제거
-    - 숫자/단위는 유지(사건 식별에 도움)
-    """
+    """범용 중복 제거용: 표현 차이를 크게 줄여 사건 단위 비교에 유리하게 만든다."""
     t = normalize_title(raw_title)
 
     # 인용/강조 기호 제거
-    t = re.sub(r"[“”‘’'\"…·•▶️★☆※◆■◆▶️]", " ", t)
-
-    # 연속 구분자/기호 정리
+    t = re.sub(r"[“”‘’'\"…·•※◆■★☆▶️]", " ", t)
     t = re.sub(r"[|/]", " ", t)
     t = re.sub(r"[:;]", " ", t)
 
-    # 흔한 서수/숫자 표현 통일(범용)
+    # 서수/표현 통일
     t = re.sub(r"\b두\s*번째\b", "2번째", t)
     t = re.sub(r"\b세\s*번째\b", "3번째", t)
     t = re.sub(r"\b네\s*번째\b", "4번째", t)
     t = re.sub(r"\b(\d+)\s*번째\b", r"\1번째", t)
 
-    # 노이즈 제거(단어 경계 고려)
+    # 뉴스 문체 노이즈 제거
     for p in NEWS_STYLE_NOISE:
         t = re.sub(rf"\b{re.escape(p)}\b", " ", t, flags=re.I)
     for p in COMMON_FILLERS:
         t = re.sub(rf"\b{re.escape(p)}\b", " ", t, flags=re.I)
 
-    # 불필요 공백
     t = re.sub(r"\s+", " ", t).strip()
     return t
 
 
-# --- 범용 핵심 토큰 기반 비교 ---
-GENERIC_STOPWORDS = set([
-    # 매우 흔한 기능어/일반어 (도메인 비의존)
-    "또", "다시", "이후", "관련", "이유", "사실", "사실상", "추정", "가능성",
-    "오늘", "어제", "내일", "이번", "지난", "최근", "현재", "당시",
-    "논란", "파문", "충격", "전격", "속보", "단독", "전망", "무산",
-    "공식", "전면", "급증", "급락", "결국", "드디어",
-    # 조사/어미 유사 토큰이 섞일 때 대비(완전 형태소 분석 없이 최소)
-    "에서", "으로", "에게", "하고", "하며", "했다", "한다",
-])
+GENERIC_STOPWORDS = set(
+    [
+        "또", "다시", "이후", "관련", "이유", "사실", "사실상", "추정", "가능성",
+        "오늘", "어제", "내일", "이번", "지난", "최근", "현재", "당시",
+        "논란", "파문", "충격", "전격", "속보", "단독", "전망", "무산",
+        "공식", "전면", "급증", "급락", "결국", "드디어",
+    ]
+)
+KOREAN_PARTICLES = ("은", "는", "이", "가", "을", "를", "에", "에서", "으로", "와", "과", "도", "만")
+
+
+def strip_korean_particle(token: str) -> str:
+    """
+    형태소 분석 없이 '사건 비교' 목적의 아주 약한 보정:
+    - 3글자 이상 한글 토큰이면 끝 조사 일부 제거
+    """
+    if not token:
+        return token
+    if re.fullmatch(r"[가-힣]{3,}", token):
+        for p in KOREAN_PARTICLES:
+            if token.endswith(p) and len(token) > len(p) + 1:
+                return token[: -len(p)]
+    return token
+
 
 def core_tokens(raw_title: str) -> List[str]:
-    """
-    - 강한 정규화 후
-    - 한/영/숫자 토큰 추출
-    - 너무 일반적인 토큰 제거 + 너무 짧은 토큰 제거
-    """
     s = normalize_title_strong(raw_title).lower()
     toks = re.findall(r"[0-9A-Za-z가-힣]+", s)
 
@@ -256,11 +214,14 @@ def core_tokens(raw_title: str) -> List[str]:
             continue
         if t in GENERIC_STOPWORDS:
             continue
+        t = strip_korean_particle(t)
+        if len(t) <= 1:
+            continue
         out.append(t)
 
     # 중복 제거(순서 유지)
-    seen = set()
-    uniq = []
+    seen: Set[str] = set()
+    uniq: List[str] = []
     for t in out:
         if t in seen:
             continue
@@ -269,8 +230,30 @@ def core_tokens(raw_title: str) -> List[str]:
     return uniq
 
 
-def jaccard_set(a: List[str], b: List[str]) -> float:
-    sa, sb = set(a), set(b)
+def anchor_tokens(tokens: List[str]) -> Set[str]:
+    """
+    anchor = 사건을 구분하는 데 도움이 되는 토큰(고유명사/숫자/긴 단어 등)
+    """
+    anchors: Set[str] = set()
+    for t in tokens:
+        if t in GENERIC_STOPWORDS:
+            continue
+        if re.fullmatch(r"\d+", t):
+            anchors.add(t)
+            continue
+        if re.search(r"[0-9]", t) and re.search(r"[A-Za-z가-힣]", t):
+            anchors.add(t)
+            continue
+        if re.fullmatch(r"[A-Za-z]{3,}", t):
+            anchors.add(t)
+            continue
+        if re.fullmatch(r"[가-힣]{3,}", t):
+            anchors.add(t)
+            continue
+    return anchors
+
+
+def jaccard(sa: Set[str], sb: Set[str]) -> float:
     if not sa and not sb:
         return 1.0
     if not sa or not sb:
@@ -278,107 +261,186 @@ def jaccard_set(a: List[str], b: List[str]) -> float:
     return len(sa & sb) / len(sa | sb)
 
 
-def score_event_similarity(raw_a: str, raw_b: str) -> float:
-    """
-    ✅ 범용 사건 유사도 점수(0~1):
-    - core token jaccard를 기본으로 하고,
-    - 숫자 토큰(예: 162, 2, 2026 등) 일치가 있으면 보너스
-    """
-    ta = core_tokens(raw_a)
-    tb = core_tokens(raw_b)
-    base = jaccard_set(ta, tb)
+def make_features(item: dict) -> dict:
+    raw = item["raw_title"]
+    norm = normalize_title_strong(raw)
+    core = core_tokens(raw)
+    anchors = anchor_tokens(core)
+    nums = set(re.findall(r"\b\d+\b", norm))
+    sorted_core_str = " ".join(sorted(core))
+    return {
+        "norm": norm,
+        "core": core,
+        "core_set": set(core),
+        "anchors": anchors,
+        "nums": nums,
+        "sorted_core_str": sorted_core_str,
+        "hash": sha256_hex(norm),
+    }
 
-    # 숫자 토큰 보너스: 숫자가 겹치면 같은 사건일 확률↑
-    na = set(re.findall(r"\b\d+\b", normalize_title_strong(raw_a)))
-    nb = set(re.findall(r"\b\d+\b", normalize_title_strong(raw_b)))
-    if na and nb:
-        num_j = len(na & nb) / len(na | nb)
-        base = min(1.0, base + 0.12 * num_j)
+
+def similarity_score(fa: dict, fb: dict) -> float:
+    """
+    0~1 범용 사건 유사도:
+    - core jaccard
+    - anchor jaccard(더 중요)
+    - token-sorted 문자열의 SequenceMatcher 비율(어순 변화에 강함)
+    - 숫자 교집합 보너스
+    """
+    j_core = jaccard(fa["core_set"], fb["core_set"])
+    j_anchor = jaccard(fa["anchors"], fb["anchors"])
+    seq = difflib.SequenceMatcher(None, fa["sorted_core_str"], fb["sorted_core_str"]).ratio()
+
+    base = max(j_anchor, j_core * 0.92, seq * 0.98)
+
+    if fa["nums"] and fb["nums"]:
+        j_num = len(fa["nums"] & fb["nums"]) / max(1, len(fa["nums"] | fb["nums"]))
+        base = min(1.0, base + 0.10 * j_num)
 
     return base
 
 
 def cluster_news_events(items: List[dict]) -> List[dict]:
     """
-    ✅ 아이템들을 '사건(event) 클러스터'로 묶는다.
-    반환: [
-      {
-        "rep": 대표기사(dict),
-        "others": [추가기사들...],
-        "count": int,
-        "cluster_key": str,
-      }, ...
-    ]
+    강화된 범용 사건 클러스터링:
+    - exact(강정규화 해시) 1차 제거
+    - anchor 기반 후보군 탐색 + 결합 유사도 점수
+    - 2차(클러스터 대표끼리) merge pass로 split cluster 추가 병합
     """
-    clusters: List[dict] = []
-
-    # 대표 선정 정책(범용):
-    # - 클러스터 내에서 "가장 최신"을 대표로(업데이트 반영)
-    #   필요하면 "가장 이른"으로 바꾸려면 아래 choose_rep만 변경
-    def choose_rep(a: dict, b: dict) -> dict:
-        return a if a.get("published_ts", 0) >= b.get("published_ts", 0) else b
-
-    # 임계치(범용): 너무 낮추면 오탐, 너무 높이면 중복 잔존
-    # 경험상 0.52~0.62 사이 튜닝. 기본 0.56 추천.
-    THRESH = 0.56
-
+    # ---- 1) exact dedup(강정규화 해시) ----
+    by_hash: Dict[str, dict] = {}
     for it in items:
-        placed = False
-        best_idx = -1
+        f = make_features(it)
+        h = f["hash"]
+        if h not in by_hash:
+            by_hash[h] = it
+        else:
+            # 대표 선정: 최신(업데이트 반영)
+            if it.get("published_ts", 0) > by_hash[h].get("published_ts", 0):
+                by_hash[h] = it
+
+    dedup_stage1 = list(by_hash.values())
+    dedup_stage1.sort(key=lambda x: x.get("published_ts", 0), reverse=True)
+
+    # ---- 2) incremental clustering with inverted index ----
+    clusters: List[dict] = []
+    inv: Dict[str, Set[int]] = {}  # token -> cluster_ids
+
+    def add_to_inv(cid: int, toks: Set[str]) -> None:
+        for t in toks:
+            inv.setdefault(t, set()).add(cid)
+
+    # ✅ 튜닝 포인트 (중복이 많으면 WITH_ANCHOR를 0.50~0.52 쪽으로 낮춰보는 게 효과 큼)
+    THRESH_WITH_ANCHOR = 0.52   # anchor/숫자 겹침 있을 때는 공격적으로
+    THRESH_NO_ANCHOR = 0.70     # anchor/숫자 겹침 없으면 매우 비슷할 때만 병합
+
+    for it in dedup_stage1:
+        fi = make_features(it)
+
+        cand: Set[int] = set()
+        for t in list(fi["anchors"])[:8]:
+            cand |= inv.get(t, set())
+        for n in list(fi["nums"])[:4]:
+            cand |= inv.get(n, set())
+
+        if not cand:
+            # 후보가 없으면 최근 클러스터 일부만 비교(시간 지역성)
+            cand = set(range(max(0, len(clusters) - 25), len(clusters)))
+
+        best_cid = -1
         best_score = 0.0
 
-        for i, c in enumerate(clusters):
-            rep = c["rep"]
-            s = score_event_similarity(it["raw_title"], rep["raw_title"])
+        for cid in cand:
+            c = clusters[cid]
+            s = similarity_score(fi, c["rep_feat"])
             if s > best_score:
                 best_score = s
-                best_idx = i
+                best_cid = cid
 
-        # 가장 비슷한 클러스터가 임계치 넘으면 거기에 합류
-        if best_idx >= 0 and best_score >= THRESH:
-            c = clusters[best_idx]
-            # 대표 갱신
-            new_rep = choose_rep(c["rep"], it)
-            if new_rep is not c["rep"]:
-                # 대표가 바뀌면 기존 대표는 others로 이동
-                c["others"].append(c["rep"])
-                c["rep"] = new_rep
-            else:
-                c["others"].append(it)
-            c["count"] += 1
-            placed = True
+        if best_cid >= 0:
+            c = clusters[best_cid]
+            anchor_overlap = len(fi["anchors"] & c["anchor_union"])
+            num_overlap = len(fi["nums"] & c["num_union"])
+            thresh = THRESH_WITH_ANCHOR if (anchor_overlap > 0 or num_overlap > 0) else THRESH_NO_ANCHOR
 
+            if best_score >= thresh:
+                # merge
+                if it.get("published_ts", 0) > c["rep"].get("published_ts", 0):
+                    c["others"].append(c["rep"])
+                    c["rep"] = it
+                    c["rep_feat"] = fi
+                else:
+                    c["others"].append(it)
+
+                c["count"] += 1
+                new_anchors = fi["anchors"] - c["anchor_union"]
+                new_nums = fi["nums"] - c["num_union"]
+                c["anchor_union"] |= fi["anchors"]
+                c["num_union"] |= fi["nums"]
+                add_to_inv(best_cid, new_anchors | new_nums)
+                continue
+
+        # new cluster
+        cid = len(clusters)
+        clusters.append(
+            {
+                "rep": it,
+                "rep_feat": fi,
+                "others": [],
+                "count": 1,
+                "anchor_union": set(fi["anchors"]),
+                "num_union": set(fi["nums"]),
+            }
+        )
+        add_to_inv(cid, set(fi["anchors"]) | set(fi["nums"]))
+
+    # ---- 3) merge pass(대표끼리 한 번 더 병합) ----
+    merged: List[dict] = []
+    for c in sorted(clusters, key=lambda x: x["rep"].get("published_ts", 0), reverse=True):
+        placed = False
+        for m in merged:
+            s = similarity_score(c["rep_feat"], m["rep_feat"])
+            anchor_overlap = len(c["anchor_union"] & m["anchor_union"])
+            num_overlap = len(c["num_union"] & m["num_union"])
+            thresh = THRESH_WITH_ANCHOR if (anchor_overlap > 0 or num_overlap > 0) else THRESH_NO_ANCHOR
+
+            if s >= thresh:
+                if c["rep"].get("published_ts", 0) > m["rep"].get("published_ts", 0):
+                    m["others"].append(m["rep"])
+                    m["rep"] = c["rep"]
+                    m["rep_feat"] = c["rep_feat"]
+
+                m["others"].extend(c["others"])
+                m["count"] += c["count"]
+                m["anchor_union"] |= c["anchor_union"]
+                m["num_union"] |= c["num_union"]
+                placed = True
+                break
         if not placed:
-            clusters.append(
-                {
-                    "rep": it,
-                    "others": [],
-                    "count": 1,
-                    "cluster_key": sha256_hex(normalize_title_strong(it["raw_title"])),
-                }
-            )
+            merged.append(c)
 
-    # 대표 최신순 정렬
-    clusters.sort(key=lambda x: x["rep"].get("published_ts", 0), reverse=True)
-    return clusters
+    merged.sort(key=lambda x: x["rep"].get("published_ts", 0), reverse=True)
+
+    out = []
+    for c in merged:
+        out.append(
+            {
+                "rep": c["rep"],
+                "others": c["others"],
+                "count": c["count"],
+                "cluster_key": sha256_hex(c["rep_feat"]["norm"]),
+            }
+        )
+    return out
 
 
 def collect_news_last_24h(session: requests.Session) -> Tuple[List[dict], dict]:
-    """
-    ✅ 변경점:
-    - RSS를 session.get으로 받아 retry/backoff 적용
-    - 최근 24시간 필터
-    - "사건(event) 단위"로 클러스터링하여 중복 체감 개선
-    반환: event_clusters(list), stats(dict)
-    """
     now_kst = datetime.now(KST)
     since_kst = now_kst - timedelta(hours=24)
 
-    # (원래 쿼리 유지) - 필요시 환경변수로 빼도 됨
     query = "(마약 OR 마약류 OR 향정 OR 약물) AND (적발 OR 검거 OR 압수 OR 밀수 OR 수사 OR 단속 OR 운전)"
     url = build_google_news_rss_url(query)
 
-    # ✅ session 기반으로 RSS 수신
     feed_text = ""
     try:
         r = session.get(url, timeout=20)
@@ -389,12 +451,11 @@ def collect_news_last_24h(session: requests.Session) -> Tuple[List[dict], dict]:
 
     feed = feedparser.parse(feed_text if feed_text else url)
 
-    items = []
+    items: List[dict] = []
     for e in feed.entries:
         raw_title = getattr(e, "title", "").strip()
         link = getattr(e, "link", "").strip()
 
-        # 시간 파싱
         published_dt_utc = None
         if getattr(e, "published_parsed", None):
             published_dt_utc = datetime(*e.published_parsed[:6], tzinfo=timezone.utc)
@@ -408,24 +469,18 @@ def collect_news_last_24h(session: requests.Session) -> Tuple[List[dict], dict]:
         if published_kst < since_kst:
             continue
 
-        title = normalize_title(raw_title)
-        publisher = extract_publisher(raw_title)
-
         items.append(
             {
-                "title": title,
+                "title": normalize_title(raw_title),
                 "raw_title": raw_title,
-                "publisher": publisher,
+                "publisher": extract_publisher(raw_title),
                 "link": link,
                 "published_kst": published_kst.isoformat(timespec="minutes"),
                 "published_ts": published_kst.timestamp(),
             }
         )
 
-    # 최신순 정렬(클러스터링 입력)
     items.sort(key=lambda x: x["published_ts"], reverse=True)
-
-    # ✅ 사건 단위 클러스터링
     clusters = cluster_news_events(items)
 
     stats = {
@@ -440,9 +495,10 @@ def collect_news_last_24h(session: requests.Session) -> Tuple[List[dict], dict]:
 
 def render_news_html(event_clusters: List[dict], stats: dict) -> str:
     """
-    ✅ 출력 형태 변경:
-    - "사건 N개 / 기사 M개"
-    - 사건별 대표 1개 + (추가 기사 수) 접기/펼치기
+    변경점:
+    - 사건 단위로만 노출(대표 기사 1개)
+    - 같은 사건으로 묶인 기사 1건(+1)은 "리스트로는" 보여주지 않음
+    - +2 이상일 때만 details로 추가 기사 리스트 노출
     """
     if not event_clusters:
         return "<p>최근 24시간 기준 수집된 뉴스가 없습니다.</p>"
@@ -450,38 +506,36 @@ def render_news_html(event_clusters: List[dict], stats: dict) -> str:
     collected = int(stats.get("collected", 0) or 0)
     events = int(stats.get("events", 0) or 0)
 
-    blocks = []
+    blocks: List[str] = []
     for idx, c in enumerate(event_clusters, start=1):
         rep = c["rep"]
-        others = c["others"]
+        others = c.get("others", [])
         extra_n = len(others)
 
-        pub = f"<span class='meta'>[{escape_html(rep['publisher'])}]</span> " if rep.get("publisher") else ""
-        ts = f"<span class='meta'>{escape_html(rep['published_kst'])}</span>"
+        pub = f"<span class='meta'>[{escape_html(rep.get('publisher',''))}]</span> " if rep.get("publisher") else ""
+        ts = f"<span class='meta'>{escape_html(rep.get('published_kst',''))}</span>"
 
-        # 대표 기사
         badge_extra = f" <span class='badge small'>+{extra_n}건</span>" if extra_n else ""
 
         head = (
             f"<div class='event-head'>"
             f"<span class='event-no'>[사건 {idx}]</span> "
-            f"{pub}<a href='{escape_attr(rep['link'])}' target='_blank' rel='noopener noreferrer'>"
-            f"{escape_html(rep['title'])}</a> {ts}"
+            f"{pub}<a href='{escape_attr(rep.get('link',''))}' target='_blank' rel='noopener noreferrer'>"
+            f"{escape_html(rep.get('title',''))}</a> {ts}"
             f"{badge_extra}"
             f"</div>"
         )
 
-        # 추가 기사 접기
-        if extra_n:
+        tail = ""
+        if extra_n >= 2:
             lis = []
-            # 최신순으로 보여주기(대표 제외)
             others_sorted = sorted(others, key=lambda x: x.get("published_ts", 0), reverse=True)
-            for o in others_sorted[:30]:
-                opub = f"<span class='meta'>[{escape_html(o['publisher'])}]</span> " if o.get("publisher") else ""
-                ots = f"<span class='meta'>{escape_html(o['published_kst'])}</span>"
+            for o in others_sorted[:25]:
+                opub = f"<span class='meta'>[{escape_html(o.get('publisher',''))}]</span> " if o.get("publisher") else ""
+                ots = f"<span class='meta'>{escape_html(o.get('published_kst',''))}</span>"
                 lis.append(
-                    f"<li>{opub}<a href='{escape_attr(o['link'])}' target='_blank' rel='noopener noreferrer'>"
-                    f"{escape_html(o['title'])}</a> {ots}</li>"
+                    f"<li>{opub}<a href='{escape_attr(o.get('link',''))}' target='_blank' rel='noopener noreferrer'>"
+                    f"{escape_html(o.get('title',''))}</a> {ots}</li>"
                 )
             tail = (
                 "<details class='event-more'>"
@@ -489,8 +543,6 @@ def render_news_html(event_clusters: List[dict], stats: dict) -> str:
                 f"<ul>{''.join(lis)}</ul>"
                 "</details>"
             )
-        else:
-            tail = ""
 
         blocks.append(f"<div class='event'>{head}{tail}</div>")
 
@@ -504,46 +556,32 @@ def render_news_html(event_clusters: List[dict], stats: dict) -> str:
 
 
 # =========================
-# Site Monitoring (Visualping 대체)
+# Site Monitoring
 # =========================
 @dataclass
 class MonitorSpec:
     key: str
     name: str
     url: str
-    extractor: Callable[[str], List[str]]  # input: normalized html, output: tokens
+    extractor: Callable[[str], List[str]]
     fallback_extractor: Optional[Callable[[str], List[str]]] = None
-    soften_dates: bool = True  # ✅ 대상별 날짜/epoch 완화 on/off
+    soften_dates: bool = True
+    use_playwright: bool = False  # requests로 안 되면 playwright 렌더링 fallback
 
 
 def normalize_html(html: str, soften_dates: bool = True) -> str:
-    """
-    오탐 최소화를 위한 HTML 정규화:
-    - script/style 제거
-    - 주석 제거
-    - 캐시버스터 쿼리스트링 정리
-    - 날짜/epoch 류 동적 값 완화 (✅ 선택 가능)
-    - 공백 축약
-    """
     soup = BeautifulSoup(html, "html.parser")
-
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
 
     text = str(soup)
-
-    # 주석 제거
     text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
-
-    # 캐시버스터 제거(보수적)
     text = re.sub(r"([?&](v|t|timestamp|cache|cb)=)[^&\"'>]+", r"\1", text, flags=re.I)
 
     if soften_dates:
-        # 흔한 동적 값 완화(너무 공격적이면 누락 가능 → 대상별 선택)
         text = re.sub(r"\b20\d{2}[-/.]\d{1,2}[-/.]\d{1,2}\b", "DATE", text)
-        text = re.sub(r"\b1[6-9]\d{8,}\b", "EPOCH", text)  # 1600000000~ 류
+        text = re.sub(r"\b1[6-9]\d{8,}\b", "EPOCH", text)
 
-    # 공백 축약
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
@@ -558,7 +596,7 @@ def extract_by_regex_list(normalized_html: str, patterns: List[str], max_tokens:
             x = str(x).strip()
             if x:
                 tokens.append(x)
-    # 중복 제거 + 상단 제한
+
     uniq = []
     seen = set()
     for t in tokens:
@@ -572,10 +610,6 @@ def extract_by_regex_list(normalized_html: str, patterns: List[str], max_tokens:
 
 
 def extractor_swgdrug(normalized_html: str) -> List[str]:
-    """
-    SWGDRUG 홈:
-    - 링크/문서 제목/버전 표기 등 안정 토큰 위주
-    """
     patterns = [
         r"SWGDRUG\s*(?:Recommendations|Recommendations\s+and\s+Reports|Documents)?",
         r"(Recommendations\s+and\s+Reports)",
@@ -589,8 +623,6 @@ def extractor_swgdrug(normalized_html: str) -> List[str]:
         r"\b(Revision\s*\d+(?:\.\d+)*)\b",
     ]
     tokens = extract_by_regex_list(normalized_html, patterns, max_tokens=140)
-
-    # ✅ URL 전체는 변동성이 커서 파일명만 남기는 방식으로 안정화(범용 개선)
     cleaned = []
     for t in tokens:
         if t.lower().endswith((".pdf", ".doc", ".docx", ".xls", ".xlsx")):
@@ -600,41 +632,7 @@ def extractor_swgdrug(normalized_html: str) -> List[str]:
     return cleaned
 
 
-def try_extract_cayman_new_products_rendered(url: str) -> Tuple[List[str], str]:
-    """
-    ✅ Playwright가 없거나 브라우저가 설치되지 않은 환경에서도 죽지 않도록:
-    - 성공: (tokens, "")
-    - 실패: ([], "에러 메시지")
-    """
-    try:
-        from playwright.sync_api import sync_playwright
-
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(url, wait_until="networkidle", timeout=60000)
-            html = page.content()
-            browser.close()
-
-        tokens = re.findall(r"\bItem\s*No\.?\s*[:#]?\s*(\d{4,8})\b", html, flags=re.I)
-
-        uniq, seen = [], set()
-        for t in tokens:
-            if t in seen:
-                continue
-            seen.add(t)
-            uniq.append(t)
-            if len(uniq) >= 200:
-                break
-        return uniq, ""
-    except Exception as e:
-        return [], f"Playwright failed: {type(e).__name__}: {e}"
-
-
 def extractor_cayman_csl_version_additions(normalized_html: str) -> List[str]:
-    """
-    CSL Library 페이지에서 'Version info' 및 'Additions' 섹션의 텍스트만 추출하여 토큰화.
-    """
     soup = BeautifulSoup(normalized_html, "html.parser")
 
     def collect_section_text(title: str) -> str:
@@ -659,7 +657,7 @@ def extractor_cayman_csl_version_additions(normalized_html: str) -> List[str]:
                     break
             return " ".join(texts).strip()
 
-        m = re.search(rf"({re.escape(title)}.{0,1200})", normalized_html, flags=re.I)
+        m = re.search(rf"({re.escape(title)}.{0,1500})", normalized_html, flags=re.I)
         if m:
             chunk = re.sub(r"<[^>]+>", " ", m.group(1))
             chunk = re.sub(r"\s+", " ", chunk).strip()
@@ -676,14 +674,35 @@ def extractor_cayman_csl_version_additions(normalized_html: str) -> List[str]:
     if ad:
         tokens.append("Additions:" + ad)
 
-    tokens = [t[:2000] for t in tokens]
-    return tokens
+    return [t[:2000] for t in tokens]
+
+
+def extractor_cayman_csl_fallback(normalized_html: str) -> List[str]:
+    """
+    CSL이 JS 렌더링/레이아웃 변경으로 heading 탐지가 실패할 때 대비.
+    """
+    patterns = [
+        r'"dateModified"\s*:\s*"([^"]+)"',
+        r'"datePublished"\s*:\s*"([^"]+)"',
+        r'"lastModified"\s*:\s*"([^"]+)"',
+        r"\bLast\s+updated\b[^<]{0,120}",
+        r"\bUpdated\b[^<]{0,120}",
+        r"(Version\s*info.{0,600})",
+        r"(Additions.{0,900})",
+    ]
+    raw = extract_by_regex_list(normalized_html, patterns, max_tokens=20)
+    cleaned = []
+    for t in raw:
+        t2 = re.sub(r"<[^>]+>", " ", t)
+        t2 = re.sub(r"\s+", " ", t2).strip()
+        if t2:
+            cleaned.append(t2)
+    return cleaned[:8]
 
 
 def extractor_cayman_itemno(normalized_html: str) -> List[str]:
     patterns = [r"\bItem\s*No\.?\s*[:#]?\s*(\d{4,8})\b"]
-    tokens = extract_by_regex_list(normalized_html, patterns, max_tokens=120)
-    return tokens
+    return extract_by_regex_list(normalized_html, patterns, max_tokens=120)
 
 
 def extractor_cayman_fallback(normalized_html: str) -> List[str]:
@@ -695,184 +714,113 @@ def extractor_cayman_fallback(normalized_html: str) -> List[str]:
     return extract_by_regex_list(normalized_html, patterns, max_tokens=60)
 
 
-def monitor_one(
-    session: requests.Session,
-    spec: MonitorSpec,
-    prev_state: dict,
-    timeout: int = 25,
-) -> dict:
+def try_render_html_playwright(url: str) -> Tuple[str, str]:
     """
-    표준 출력:
-      {
-        key, name, url,
-        ok: bool,
-        changed: bool|None,
-        error: str,
-        token_count: int,
-        tokens_head: [..],
-        hash: str,
-        prev_hash: str,
-        fetched_kst: str
-      }
+    Playwright 렌더링으로 HTML 획득.
+    - 성공: (html, "")
+    - 실패: ("", "error")
     """
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(url, wait_until="networkidle", timeout=60000)
+            html = page.content()
+            browser.close()
+        return html, ""
+    except Exception as e:
+        return "", f"Playwright failed: {type(e).__name__}: {e}"
+
+
+def monitor_one(session: requests.Session, spec: MonitorSpec, prev_state: dict, timeout: int = 25) -> dict:
     now_kst = datetime.now(KST).isoformat(timespec="minutes")
 
     prev_entry = (prev_state or {}).get(spec.key, {}) if isinstance(prev_state, dict) else {}
     prev_hash = str(prev_entry.get("hash", "") or "")
+    prev_tokens_head = list(prev_entry.get("tokens_head", []) or [])[:12]
 
     def compute_changed(cur_hash: str) -> Optional[bool]:
-        # ✅ 초기 실행/상태 유실 시 changed=None로 표기(원하면 False로 바꿔도 됨)
         if not prev_hash:
             return None
         return cur_hash != prev_hash
 
+    used_playwright = False
+    html = ""
+    req_err = ""
+
+    # 1) requests 시도
     try:
-        # ✅ Cayman New Products: Playwright 우선 → 실패 시 HTML fallback
-        if spec.key == "cayman_new_products":
-            tokens, pw_err = try_extract_cayman_new_products_rendered(spec.url)
-            if tokens:
-                fp_text = "\n".join(tokens)
-                cur_hash = sha256_hex(fp_text)
-                return {
-                    "key": spec.key,
-                    "name": spec.name,
-                    "url": spec.url,
-                    "ok": True,
-                    "changed": compute_changed(cur_hash),
-                    "error": "",
-                    "token_count": len(tokens),
-                    "tokens_head": tokens[:12],
-                    "hash": cur_hash,
-                    "prev_hash": prev_hash,
-                    "fetched_kst": now_kst,
-                }
-
-            # Playwright 실패 → HTML 기반 fallback 진행
-            r = session.get(spec.url, timeout=timeout)
-            if r.status_code != 200:
-                return {
-                    "key": spec.key,
-                    "name": spec.name,
-                    "url": spec.url,
-                    "ok": False,
-                    "changed": False,
-                    "error": f"{pw_err} / HTTP {r.status_code}",
-                    "token_count": 0,
-                    "tokens_head": [],
-                    "hash": "",
-                    "prev_hash": prev_hash,
-                    "fetched_kst": now_kst,
-                }
-
-            normalized = normalize_html(r.text, soften_dates=spec.soften_dates)
-
-            # Cayman New Products는 itemno가 가장 범용적으로 잘 먹힘
-            tokens = extractor_cayman_itemno(normalized)
-            if not tokens:
-                tokens = extractor_cayman_fallback(normalized)
-
-            if not tokens:
-                return {
-                    "key": spec.key,
-                    "name": spec.name,
-                    "url": spec.url,
-                    "ok": False,
-                    "changed": False,
-                    "error": f"{pw_err} / Token extraction empty (fallback)",
-                    "token_count": 0,
-                    "tokens_head": [],
-                    "hash": "",
-                    "prev_hash": prev_hash,
-                    "fetched_kst": now_kst,
-                }
-
-            fp_text = "\n".join(tokens)
-            cur_hash = sha256_hex(fp_text)
-
-            return {
-                "key": spec.key,
-                "name": spec.name,
-                "url": spec.url,
-                "ok": True,
-                "changed": compute_changed(cur_hash),
-                "error": f"{pw_err} (fallback used)",
-                "token_count": len(tokens),
-                "tokens_head": tokens[:12],
-                "hash": cur_hash,
-                "prev_hash": prev_hash,
-                "fetched_kst": now_kst,
-            }
-
-        # ---- 그 외(HTML 기반 감시) ----
         r = session.get(spec.url, timeout=timeout)
-        status = r.status_code
-        if status != 200:
-            return {
-                "key": spec.key,
-                "name": spec.name,
-                "url": spec.url,
-                "ok": False,
-                "changed": False,
-                "error": f"HTTP {status}",
-                "token_count": 0,
-                "tokens_head": [],
-                "hash": "",
-                "prev_hash": prev_hash,
-                "fetched_kst": now_kst,
-            }
+        if r.status_code == 200:
+            html = r.text
+        else:
+            req_err = f"HTTP {r.status_code}"
+    except Exception as e:
+        req_err = f"requests failed: {type(e).__name__}: {e}"
 
-        normalized = normalize_html(r.text, soften_dates=spec.soften_dates)
-
+    def extract_tokens_from_html(source_html: str) -> List[str]:
+        normalized = normalize_html(source_html, soften_dates=spec.soften_dates)
         tokens = spec.extractor(normalized)
         if (not tokens) and spec.fallback_extractor:
             tokens = spec.fallback_extractor(normalized)
+        return tokens
 
-        if not tokens:
-            return {
-                "key": spec.key,
-                "name": spec.name,
-                "url": spec.url,
-                "ok": False,
-                "changed": False,
-                "error": "Token extraction empty",
-                "token_count": 0,
-                "tokens_head": [],
-                "hash": "",
-                "prev_hash": prev_hash,
-                "fetched_kst": now_kst,
-            }
+    tokens: List[str] = []
+    if html:
+        tokens = extract_tokens_from_html(html)
 
-        fp_text = "\n".join(tokens)
-        cur_hash = sha256_hex(fp_text)
+    # 2) 필요 시 playwright fallback
+    pw_err = ""
+    if (not tokens) and spec.use_playwright:
+        rendered, pw_err = try_render_html_playwright(spec.url)
+        if rendered:
+            used_playwright = True
+            tokens = extract_tokens_from_html(rendered)
 
-        return {
-            "key": spec.key,
-            "name": spec.name,
-            "url": spec.url,
-            "ok": True,
-            "changed": compute_changed(cur_hash),
-            "error": "",
-            "token_count": len(tokens),
-            "tokens_head": tokens[:12],
-            "hash": cur_hash,
-            "prev_hash": prev_hash,
-            "fetched_kst": now_kst,
-        }
+    if not tokens:
+        err = "Token extraction empty"
+        if req_err:
+            err = f"{req_err} / {err}"
+        if spec.use_playwright and pw_err:
+            err = f"{err} / {pw_err}"
 
-    except Exception as e:
         return {
             "key": spec.key,
             "name": spec.name,
             "url": spec.url,
             "ok": False,
             "changed": False,
-            "error": f"{type(e).__name__}: {e}",
+            "error": err,
             "token_count": 0,
             "tokens_head": [],
+            "prev_tokens_head": prev_tokens_head,  # ✅ FAIL이어도 전날 토큰 미리보기 제공
             "hash": "",
             "prev_hash": prev_hash,
             "fetched_kst": now_kst,
+            "used_playwright": used_playwright,
         }
+
+    fp_text = "\n".join(tokens)
+    cur_hash = sha256_hex(fp_text)
+
+    note = "playwright fallback used" if used_playwright else ""
+    return {
+        "key": spec.key,
+        "name": spec.name,
+        "url": spec.url,
+        "ok": True,
+        "changed": compute_changed(cur_hash),
+        "error": note,
+        "token_count": len(tokens),
+        "tokens_head": tokens[:12],
+        "prev_tokens_head": prev_tokens_head,
+        "hash": cur_hash,
+        "prev_hash": prev_hash,
+        "fetched_kst": now_kst,
+        "used_playwright": used_playwright,
+    }
 
 
 def run_monitoring(session: requests.Session, prev_state: dict) -> Tuple[List[dict], dict, dict]:
@@ -883,21 +831,25 @@ def run_monitoring(session: requests.Session, prev_state: dict) -> Tuple[List[di
             url="https://swgdrug.org/",
             extractor=extractor_swgdrug,
             soften_dates=True,
+            use_playwright=False,
         ),
         MonitorSpec(
             key="cayman_csl",
             name="Cayman CSL Library",
             url="https://www.caymanchem.com/forensics/publications/csl",
             extractor=extractor_cayman_csl_version_additions,
-            soften_dates=False,  # ✅ CSL은 버전/추가사항에서 날짜가 의미 있을 수 있어 완화 끔
+            fallback_extractor=extractor_cayman_csl_fallback,
+            soften_dates=False,
+            use_playwright=True,  # ✅ requests로 토큰이 비면 playwright 렌더링 시도
         ),
         MonitorSpec(
             key="cayman_new_products",
             name="Cayman New Products",
             url="https://www.caymanchem.com/forensics/search/productSearch",
-            extractor=lambda html: [],  # monitor_one에서 분기 처리
-            fallback_extractor=extractor_cayman_itemno,
+            extractor=extractor_cayman_itemno,
+            fallback_extractor=extractor_cayman_fallback,
             soften_dates=True,
+            use_playwright=True,
         ),
     ]
 
@@ -915,8 +867,7 @@ def run_monitoring(session: requests.Session, prev_state: dict) -> Tuple[List[di
         "failed": failed,
     }
 
-    # 새 state 생성
-    new_state = {}
+    new_state: dict = {}
     for r in results:
         if r.get("ok") and r.get("hash"):
             new_state[r["key"]] = {
@@ -937,10 +888,7 @@ def run_monitoring(session: requests.Session, prev_state: dict) -> Tuple[List[di
 
 
 def render_monitor_md(results: List[dict], summary: dict) -> str:
-    """
-    docs/site_monitor.md (Issue 본문)
-    """
-    lines = []
+    lines: List[str] = []
     lines.append(f"# 감시 사이트 업데이트 점검 ({summary.get('date_kst','')})")
     lines.append("")
     lines.append(f"- 업데이트 감지: **{summary.get('updated',0)}**")
@@ -948,12 +896,13 @@ def render_monitor_md(results: List[dict], summary: dict) -> str:
     lines.append("")
     lines.append("## 결과")
     lines.append("")
-    lines.append("| 사이트 | 상태 | 변경 | 토큰수 | 비고 |")
-    lines.append("|---|---:|---:|---:|---|")
+    lines.append("| 사이트 | 상태 | 변경 | 토큰수 | 토큰 미리보기 | 비고 |")
+    lines.append("|---|---:|---:|---:|---|---|")
 
     for r in results:
         name = f"[{r['name']}]({r['url']})"
         ok = "OK" if r.get("ok") else "FAIL"
+
         ch = r.get("changed")
         if ch is True:
             changed = "YES"
@@ -963,8 +912,12 @@ def render_monitor_md(results: List[dict], summary: dict) -> str:
             changed = "NO"
 
         token_count = str(r.get("token_count", 0) or 0)
-        note = r.get("error", "") if (not r.get("ok") or r.get("error")) else ""
-        lines.append(f"| {name} | {ok} | {changed} | {token_count} | {escape_md(note)} |")
+
+        toks = r.get("tokens_head", []) if r.get("ok") else (r.get("prev_tokens_head", []) or [])
+        preview = " / ".join([shorten(str(t), 45) for t in toks[:3]]) if toks else ""
+        note = r.get("error", "") or ""
+
+        lines.append(f"| {name} | {ok} | {changed} | {token_count} | {escape_md(preview)} | {escape_md(note)} |")
 
     lines.append("")
     lines.append("## 변경 상세(상단 토큰)")
@@ -979,24 +932,18 @@ def render_monitor_md(results: List[dict], summary: dict) -> str:
             lines.append("상단 토큰(현재):")
             lines.append("")
             for t in r.get("tokens_head", [])[:12]:
-                lines.append(f"- {escape_md(t)}")
+                lines.append(f"- {escape_md(shorten(str(t), 200))}")
             lines.append("")
 
     return "\n".join(lines).strip() + "\n"
 
 
 def render_monitor_html(results: List[dict], summary: dict) -> str:
-    """
-    index.html 하단 섹션(감시 결과)
-    - 변경 없음(업데이트 0 + 실패 0)이면 details 접힘
-    - 변경/실패 있으면 자동 펼침
-    """
     updated = int(summary.get("updated", 0) or 0)
     failed = int(summary.get("failed", 0) or 0)
-
     open_attr = " open" if (updated > 0 or failed > 0) else ""
 
-    rows = []
+    rows: List[str] = []
     for r in results:
         status = "OK" if r.get("ok") else "FAIL"
         ch = r.get("changed")
@@ -1007,13 +954,17 @@ def render_monitor_html(results: List[dict], summary: dict) -> str:
         else:
             changed = "NO"
 
-        note = r.get("error", "") if (not r.get("ok") or r.get("error")) else ""
+        toks = r.get("tokens_head", []) if r.get("ok") else (r.get("prev_tokens_head", []) or [])
+        preview = "<br>".join([escape_html(shorten(str(t), 55)) for t in toks[:3]]) if toks else ""
+        note = r.get("error", "") or ""
+
         rows.append(
             "<tr>"
             f"<td><a href='{escape_attr(r['url'])}' target='_blank' rel='noopener noreferrer'>{escape_html(r['name'])}</a></td>"
             f"<td>{escape_html(status)}</td>"
             f"<td>{escape_html(changed)}</td>"
             f"<td style='text-align:right'>{int(r.get('token_count',0) or 0)}</td>"
+            f"<td><code>{preview}</code></td>"
             f"<td>{escape_html(note)}</td>"
             "</tr>"
         )
@@ -1031,7 +982,7 @@ def render_monitor_html(results: List[dict], summary: dict) -> str:
         f"<summary>감시 사이트 점검 결과 (업데이트 {updated} · 실패 {failed})</summary>"
         "<div class='box'>"
         "<table class='table'>"
-        "<thead><tr><th>사이트</th><th>상태</th><th>변경</th><th style='text-align:right'>토큰수</th><th>비고</th></tr></thead>"
+        "<thead><tr><th>사이트</th><th>상태</th><th>변경</th><th style='text-align:right'>토큰수</th><th>토큰 미리보기</th><th>비고</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody>"
         "</table>"
         "</div>"
@@ -1087,11 +1038,11 @@ def build_page_html(news_html: str, monitor_html: str, meta: dict) -> str:
     .table th, .table td {{ border-bottom: 1px solid #eee; padding: 8px; font-size: 13px; vertical-align: top; }}
     .footer {{ margin-top: 18px; color: #777; font-size: 12px; }}
 
-    /* ✅ 뉴스 이벤트 UI */
     .event {{ border: 1px solid #eee; border-radius: 12px; padding: 10px 12px; margin: 10px 0; }}
     .event-head {{ font-size: 14px; }}
     .event-no {{ font-weight: 800; margin-right: 6px; }}
     .event-more summary {{ font-weight: 600; font-size: 13px; }}
+    code {{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; }}
   </style>
 </head>
 <body>
@@ -1116,11 +1067,11 @@ def main() -> None:
     ensure_docs_dir()
     session = build_session()
 
-    # 1) 뉴스 브리핑 (✅ 사건 단위)
-    event_clusters, news_stats = collect_news_last_24h(session)
-    news_html = render_news_html(event_clusters, news_stats)
+    # 1) 뉴스 브리핑
+    clusters, news_stats = collect_news_last_24h(session)
+    news_html = render_news_html(clusters, news_stats)
 
-    # 2) 감시(전날 state 로드 → 비교) (✅ session 기반 로딩)
+    # 2) 감시(전날 state 로드 → 비교)
     prev_state = load_prev_state(session)
     results, new_state, meta = run_monitoring(session, prev_state)
 
@@ -1128,8 +1079,7 @@ def main() -> None:
     monitor_html = render_monitor_html(results, summary)
 
     # 3) 산출물 저장
-    state_out = {"meta": meta, "sites": new_state}
-    write_json(STATE_JSON, state_out)
+    write_json(STATE_JSON, {"meta": meta, "sites": new_state})
 
     md = render_monitor_md(results, summary)
     with open(MONITOR_MD, "w", encoding="utf-8") as f:

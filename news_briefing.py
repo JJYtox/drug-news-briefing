@@ -161,7 +161,7 @@ def collect_news_last_24h(session: requests.Session) -> Tuple[List[dict], dict]:
     now_kst = datetime.now(KST)
     since_kst = now_kst - timedelta(hours=24)
 
-    query = "(마약 OR 마약류 OR 향정 OR 약물) AND (적발 OR 검거 OR 압수 OR 밀수 OR 수사 OR 단속)"
+    query = "(마약 OR 마약류 OR 향정 OR 약물) AND (적발 OR 검거 OR 압수 OR 밀수 OR 수사 OR 단속 OR 운전)"
     url = build_google_news_rss_url(query)
 
     feed = feedparser.parse(url)

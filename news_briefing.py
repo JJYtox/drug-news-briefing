@@ -495,10 +495,9 @@ def collect_news_last_24h(session: requests.Session) -> Tuple[List[dict], dict]:
 
 def render_news_html(event_clusters: List[dict], stats: dict) -> str:
     """
-    변경점:
-    - 사건 단위로만 노출(대표 기사 1개)
-    - 같은 사건으로 묶인 기사 1건(+1)은 "리스트로는" 보여주지 않음
-    - +2 이상일 때만 details로 추가 기사 리스트 노출
+    - 사건 단위로 대표 기사만 노출
+    - 추가기사 목록(details)은 아예 노출하지 않음
+    - 필요하면 +N건 배지는 유지(원치 않으면 badge_extra 줄을 빈 문자열로 바꾸면 됨)
     """
     if not event_clusters:
         return "<p>최근 24시간 기준 수집된 뉴스가 없습니다.</p>"
@@ -509,42 +508,25 @@ def render_news_html(event_clusters: List[dict], stats: dict) -> str:
     blocks: List[str] = []
     for idx, c in enumerate(event_clusters, start=1):
         rep = c["rep"]
-        others = c.get("others", [])
-        extra_n = len(others)
+        extra_n = len(c.get("others", []) or [])
 
         pub = f"<span class='meta'>[{escape_html(rep.get('publisher',''))}]</span> " if rep.get("publisher") else ""
         ts = f"<span class='meta'>{escape_html(rep.get('published_kst',''))}</span>"
 
+        # ✅ +N건 표시만 유지 (완전히 숨기려면 아래 줄을 badge_extra = "" 로 변경)
         badge_extra = f" <span class='badge small'>+{extra_n}건</span>" if extra_n else ""
 
         head = (
+            f"<div class='event'>"
             f"<div class='event-head'>"
             f"<span class='event-no'>[사건 {idx}]</span> "
             f"{pub}<a href='{escape_attr(rep.get('link',''))}' target='_blank' rel='noopener noreferrer'>"
             f"{escape_html(rep.get('title',''))}</a> {ts}"
             f"{badge_extra}"
             f"</div>"
+            f"</div>"
         )
-
-        tail = ""
-        if extra_n >= 2:
-            lis = []
-            others_sorted = sorted(others, key=lambda x: x.get("published_ts", 0), reverse=True)
-            for o in others_sorted[:25]:
-                opub = f"<span class='meta'>[{escape_html(o.get('publisher',''))}]</span> " if o.get("publisher") else ""
-                ots = f"<span class='meta'>{escape_html(o.get('published_kst',''))}</span>"
-                lis.append(
-                    f"<li>{opub}<a href='{escape_attr(o.get('link',''))}' target='_blank' rel='noopener noreferrer'>"
-                    f"{escape_html(o.get('title',''))}</a> {ots}</li>"
-                )
-            tail = (
-                "<details class='event-more'>"
-                f"<summary>같은 사건으로 묶인 기사 {extra_n}건 보기</summary>"
-                f"<ul>{''.join(lis)}</ul>"
-                "</details>"
-            )
-
-        blocks.append(f"<div class='event'>{head}{tail}</div>")
+        blocks.append(head)
 
     return (
         f"<div class='kpi'>"
@@ -567,11 +549,24 @@ class MonitorSpec:
     fallback_extractor: Optional[Callable[[str], List[str]]] = None
     soften_dates: bool = True
     use_playwright: bool = False  # requests로 안 되면 playwright 렌더링 fallback
+    keep_jsonld: bool = False     # ✅ CSL 같은 페이지에서 JSON-LD(script) 유지 옵션
 
 
-def normalize_html(html: str, soften_dates: bool = True) -> str:
+def normalize_html(html: str, soften_dates: bool = True, keep_jsonld: bool = False) -> str:
     soup = BeautifulSoup(html, "html.parser")
-    for tag in soup(["script", "style", "noscript"]):
+
+    # style/noscript 제거
+    for tag in soup(["style", "noscript"]):
+        tag.decompose()
+
+    # script 처리:
+    # - 기본: 전부 제거
+    # - keep_jsonld=True면 application/ld+json만 남기고 나머지 제거
+    for tag in soup.find_all("script"):
+        if keep_jsonld:
+            typ = (tag.get("type") or "").lower().strip()
+            if typ == "application/ld+json":
+                continue
         tag.decompose()
 
     text = str(soup)
@@ -609,72 +604,83 @@ def extract_by_regex_list(normalized_html: str, patterns: List[str], max_tokens:
     return uniq
 
 
-def extractor_swgdrug(normalized_html: str) -> List[str]:
-    patterns = [
-        r"SWGDRUG\s*(?:Recommendations|Recommendations\s+and\s+Reports|Documents)?",
-        r"(Recommendations\s+and\s+Reports)",
-        r"(Minutes)",
-        r"(Monographs)",
-        r"(Technical\s+notes?)",
-        r"href=['\"]([^'\"]+\.pdf)['\"]",
-        r"href=['\"]([^'\"]+\.docx?)['\"]",
-        r"href=['\"]([^'\"]+\.xlsx?)['\"]",
-        r"\b(Version\s*\d+(?:\.\d+)*)\b",
-        r"\b(Revision\s*\d+(?:\.\d+)*)\b",
-    ]
-    tokens = extract_by_regex_list(normalized_html, patterns, max_tokens=140)
-    cleaned = []
-    for t in tokens:
-        if t.lower().endswith((".pdf", ".doc", ".docx", ".xls", ".xlsx")):
-            cleaned.append(re.sub(r".*/", "", t))
-        else:
-            cleaned.append(t)
-    return cleaned
-
-
-def extractor_cayman_csl_version_additions(normalized_html: str) -> List[str]:
+def extractor_swgdrug_additional_resources_3_5(normalized_html: str) -> List[str]:
+    """
+    SWGDRUG 홈 'Additional Resources'의
+    3) SWGDRUG Recommendations Version ...
+    5) Searchable Mass Spectral Library Version ...
+    두 줄만 토큰으로 반환 (사람이 보기 쉬운 형태)
+    """
     soup = BeautifulSoup(normalized_html, "html.parser")
+    text = soup.get_text(" ", strip=True)
+    text = re.sub(r"\s+", " ", text).strip()
 
-    def collect_section_text(title: str) -> str:
-        heading = None
-        for tag in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
-            t = tag.get_text(" ", strip=True)
-            if t and title.lower() in t.lower():
-                heading = tag
-                break
+    tokens: List[str] = []
 
-        if heading:
-            texts = []
-            for sib in heading.find_all_next():
-                if sib.name in ["h1", "h2", "h3", "h4", "h5", "h6"]:
-                    break
-                if sib.name in ["script", "style", "noscript"]:
-                    continue
-                txt = sib.get_text(" ", strip=True) if hasattr(sib, "get_text") else ""
-                if txt:
-                    texts.append(txt)
-                if len(" ".join(texts)) > 2000:
-                    break
-            return " ".join(texts).strip()
+    # 3) SWGDRUG Recommendations Version X.X was approved on Month dd, yyyy
+    m3 = re.search(
+        r"SWGDRUG Recommendations\s*Version\s*(\d+(?:\.\d+)*)\s*was approved on\s*([A-Za-z]+\s+\d{1,2},\s+\d{4})",
+        text,
+        flags=re.I,
+    )
+    if m3:
+        ver = m3.group(1).strip()
+        date_raw = m3.group(2).strip()
+        tokens.append(f"SWGDRUG Recommendations v{ver} (approved {date_raw})")
 
-        m = re.search(rf"({re.escape(title)}.{0,1500})", normalized_html, flags=re.I)
-        if m:
-            chunk = re.sub(r"<[^>]+>", " ", m.group(1))
-            chunk = re.sub(r"\s+", " ", chunk).strip()
-            return chunk
+    # 5) Searchable Mass Spectral Library Version X.X (dated Month dd, yyyy)
+    m5 = re.search(
+        r"Searchable Mass Spectral Library\s*Version\s*(\d+(?:\.\d+)*)\s*\(dated\s*([A-Za-z]+\s+\d{1,2},\s+\d{4})\)",
+        text,
+        flags=re.I,
+    )
+    if m5:
+        ver = m5.group(1).strip()
+        date_raw = m5.group(2).strip()
+        tokens.append(f"SWGDRUG MS Library v{ver} (dated {date_raw})")
 
-        return ""
+    # fallback: 문장 매칭 실패 시 버전만이라도
+    if not tokens:
+        m3b = re.search(r"SWGDRUG Recommendations\s*Version\s*(\d+(?:\.\d+)*)", text, flags=re.I)
+        if m3b:
+            tokens.append(f"SWGDRUG Recommendations v{m3b.group(1).strip()}")
+        m5b = re.search(r"Searchable Mass Spectral Library\s*Version\s*(\d+(?:\.\d+)*)", text, flags=re.I)
+        if m5b:
+            tokens.append(f"SWGDRUG MS Library v{m5b.group(1).strip()}")
 
-    vi = collect_section_text("Version info")
-    ad = collect_section_text("Additions")
+    return tokens[:6]
 
-    tokens = []
-    if vi:
-        tokens.append("Version info:" + vi)
-    if ad:
-        tokens.append("Additions:" + ad)
+def extractor_cayman_csl_library_version(normalized_html: str) -> List[str]:
+    """
+    Cayman CSL 페이지에서 'library version'에 해당하는 버전 토큰만 추출.
+    결과 예: ["CSL Library version: 3.14"]
+    """
+    soup = BeautifulSoup(normalized_html, "html.parser")
+    text = soup.get_text(" ", strip=True)
+    text = re.sub(r"\s+", " ", text).strip()
 
-    return [t[:2000] for t in tokens]
+    # 1) 가장 명확한 패턴 우선
+    patterns = [
+        r"(?:Library\s*Version|CSL\s*Library\s*Version|CSL\s*Version)\s*[:#]?\s*(\d+(?:\.\d+)+)",
+        r"Cayman Spectral Library.{0,80}?Version\s*[:#]?\s*(\d+(?:\.\d+)+)",
+        r"CaymanSpectralLibrary[_-]v?(\d+(?:\.\d+)+)",
+    ]
+
+    # 화면 텍스트 + 원문(정규화 HTML) 둘 다 탐색
+    for hay in (text, normalized_html):
+        for pat in patterns:
+            m = re.search(pat, hay, flags=re.I)
+            if m:
+                ver = m.group(1).strip()
+                return [f"CSL Library version: {ver}"]
+
+    # 2) fallback: 그래도 없으면 일반 Version 표기라도
+    m2 = re.search(r"\bVersion\s*[:#]?\s*(\d+(?:\.\d+)+)\b", text, flags=re.I)
+    if m2:
+        ver = m2.group(1).strip()
+        return [f"CSL Library version: {ver}"]
+
+    return []
 
 
 def extractor_cayman_csl_fallback(normalized_html: str) -> List[str]:
@@ -699,34 +705,103 @@ def extractor_cayman_csl_fallback(normalized_html: str) -> List[str]:
             cleaned.append(t2)
     return cleaned[:8]
 
+def extractor_cayman_new_products_names(normalized_html: str) -> List[str]:
+    """
+    Cayman 'New Products' 영역에서 제품명/물질명 토큰을 추출.
+    - Item No 위주 토큰은 배제
+    - 카테고리/필터 문구는 배제
+    """
+    soup = BeautifulSoup(normalized_html, "html.parser")
+    text = soup.get_text(" ", strip=True)
+    text = re.sub(r"\s+", " ", text).strip()
 
+    # New Products 섹션 이후 텍스트 일부만 사용(너무 넓으면 잡음↑)
+    m = re.search(r"New Products(.{0,3500})", text, flags=re.I)
+    chunk = m.group(1) if m else text
+    chunk = chunk.replace("·", "|")  # Cayman 페이지에서 자주 쓰는 구분자
+
+    parts = [p.strip() for p in chunk.split("|")]
+
+    reject_contains = [
+        "FORENSIC SCIENCE PRODUCTS",
+        "Forensic Chemistry",
+        "Toxicology",
+        "Type",
+        "Grade",
+        "Regulatory",
+        "View New Products",
+        "In stock",
+        "BULK",
+        "CUSTOM",
+        "BOOKMARK",
+        "LEARN MORE",
+        "Item No",
+        "CAS No",
+        "Purity",
+        "Formulation",
+        "Schedule",
+        "Results",
+        "Search",
+        "$",
+    ]
+
+    names: List[str] = []
+    for p in parts:
+        if not p:
+            continue
+        if len(p) < 3 or len(p) > 90:
+            continue
+        lp = p.lower()
+
+        if any(x.lower() in lp for x in reject_contains):
+            continue
+
+        # 숫자만/가격 같은 것 제거
+        if re.fullmatch(r"\d+", p):
+            continue
+
+        # 너무 일반적인 문구(설명문) 제거
+        if re.search(r"reference standard|certified reference material|screening", lp):
+            continue
+
+        names.append(p)
+
+    # 중복 제거(순서 유지)
+    uniq: List[str] = []
+    seen = set()
+    for n in names:
+        if n in seen:
+            continue
+        seen.add(n)
+        uniq.append(n)
+        if len(uniq) >= 120:
+            break
+
+    return uniq
+    
 def extractor_cayman_itemno(normalized_html: str) -> List[str]:
     patterns = [r"\bItem\s*No\.?\s*[:#]?\s*(\d{4,8})\b"]
     return extract_by_regex_list(normalized_html, patterns, max_tokens=120)
 
-
-def extractor_cayman_fallback(normalized_html: str) -> List[str]:
-    patterns = [
-        r"property=['\"]og:updated_time['\"][^>]*content=['\"]([^'\"]+)['\"]",
-        r"\bLast\s+updated\b[^<]{0,120}",
-        r"\bUpdated\b[^<]{0,120}",
-    ]
-    return extract_by_regex_list(normalized_html, patterns, max_tokens=60)
-
-
 def try_render_html_playwright(url: str) -> Tuple[str, str]:
-    """
-    Playwright 렌더링으로 HTML 획득.
-    - 성공: (html, "")
-    - 실패: ("", "error")
-    """
     try:
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(url, wait_until="networkidle", timeout=60000)
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (compatible; drug-news-briefing/1.0; +https://github.com/)",
+                locale="ko-KR",
+            )
+            page = context.new_page()
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+
+            # networkidle은 "되면 좋고, 안 되면 넘어가자" 수준으로만
+            try:
+                page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
+
             html = page.content()
             browser.close()
         return html, ""
@@ -761,7 +836,11 @@ def monitor_one(session: requests.Session, spec: MonitorSpec, prev_state: dict, 
         req_err = f"requests failed: {type(e).__name__}: {e}"
 
     def extract_tokens_from_html(source_html: str) -> List[str]:
-        normalized = normalize_html(source_html, soften_dates=spec.soften_dates)
+        normalized = normalize_html(
+            source_html,
+            soften_dates=spec.soften_dates,
+            keep_jsonld=spec.keep_jsonld,
+        )
         tokens = spec.extractor(normalized)
         if (not tokens) and spec.fallback_extractor:
             tokens = spec.fallback_extractor(normalized)
@@ -829,25 +908,26 @@ def run_monitoring(session: requests.Session, prev_state: dict) -> Tuple[List[di
             key="swgdrug_home",
             name="SWGDRUG 홈",
             url="https://swgdrug.org/",
-            extractor=extractor_swgdrug,
-            soften_dates=True,
+            extractor=extractor_swgdrug_additional_resources_3_5,
+            soften_dates=False,
             use_playwright=False,
         ),
         MonitorSpec(
             key="cayman_csl",
             name="Cayman CSL Library",
             url="https://www.caymanchem.com/forensics/publications/csl",
-            extractor=extractor_cayman_csl_version_additions,
+            extractor=extractor_cayman_csl_library_version,   # ✅ library version 토큰
             fallback_extractor=extractor_cayman_csl_fallback,
             soften_dates=False,
-            use_playwright=True,  # ✅ requests로 토큰이 비면 playwright 렌더링 시도
+            use_playwright=True,
+            keep_jsonld=True,                                 # ✅ CSL만 JSON-LD 유지
         ),
         MonitorSpec(
             key="cayman_new_products",
             name="Cayman New Products",
             url="https://www.caymanchem.com/forensics/search/productSearch",
-            extractor=extractor_cayman_itemno,
-            fallback_extractor=extractor_cayman_fallback,
+            extractor=extractor_cayman_new_products_names,
+            fallback_extractor=extractor_cayman_itemno,  # 최후 fallback(이름 못 뽑을 때만)
             soften_dates=True,
             use_playwright=True,
         ),
@@ -867,17 +947,17 @@ def run_monitoring(session: requests.Session, prev_state: dict) -> Tuple[List[di
         "failed": failed,
     }
 
-    new_state: dict = {}
-    for r in results:
-        if r.get("ok") and r.get("hash"):
-            new_state[r["key"]] = {
-                "hash": r["hash"],
-                "token_count": r.get("token_count", 0),
-                "tokens_head": r.get("tokens_head", [])[:12],
-                "fetched_kst": r.get("fetched_kst", ""),
-                "url": r.get("url", ""),
-                "name": r.get("name", ""),
-            }
+new_state = dict(prev_state) if isinstance(prev_state, dict) else {}
+for r in results:
+    if r.get("ok") and r.get("hash"):
+        new_state[r["key"]] = {
+            "hash": r["hash"],
+            "token_count": r.get("token_count", 0),
+            "tokens_head": r.get("tokens_head", [])[:12],
+            "fetched_kst": r.get("fetched_kst", ""),
+            "url": r.get("url", ""),
+            "name": r.get("name", ""),
+        }
 
     meta = {
         "generated_kst": datetime.now(KST).isoformat(timespec="minutes"),

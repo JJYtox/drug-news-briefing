@@ -331,7 +331,7 @@ def cluster_news_events(items: List[dict]) -> List[dict]:
             inv.setdefault(t, set()).add(cid)
 
     # ✅ 튜닝 포인트 (중복이 많으면 WITH_ANCHOR를 0.50~0.52 쪽으로 낮춰보는 게 효과 큼)
-    THRESH_WITH_ANCHOR = 0.52   # anchor/숫자 겹침 있을 때는 공격적으로
+    THRESH_WITH_ANCHOR = 0.50   # anchor/숫자 겹침 있을 때는 공격적으로
     THRESH_NO_ANCHOR = 0.70     # anchor/숫자 겹침 없으면 매우 비슷할 때만 병합
 
     for it in dedup_stage1:

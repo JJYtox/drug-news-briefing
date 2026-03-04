@@ -7,6 +7,7 @@ import json
 import time
 import hashlib
 import difflib
+import html as html_lib
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional, Tuple, Set
@@ -117,7 +118,15 @@ def shorten(s: str, max_len: int = 70) -> str:
         return s
     return s[: max_len - 1] + "…"
 
-
+def clean_token(s: str) -> str:
+    """
+    토큰에 섞이는 HTML 엔티티/태그/공백을 정리해서 사람이 읽기 쉽게 만든다.
+    """
+    s = html_lib.unescape(s or "")
+    s = re.sub(r"<[^>]+>", " ", s)      # <br> 같은 태그 제거
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+    
 # =========================
 # News Briefing (A안: 의존성 없음, 범용 중복 제거 강화)
 # =========================
@@ -650,134 +659,178 @@ def extractor_swgdrug_additional_resources_3_5(normalized_html: str) -> List[str
 
     return tokens[:6]
 
+def _format_csl_version(v: str) -> str:
+    """
+    v가 8자리 숫자면 날짜형(YYYYMMDD 또는 MMDDYYYY)으로 보기 좋게 변환.
+    그 외(3.14 같은 버전)는 그대로 둔다.
+    """
+    v = (v or "").strip()
+
+    if re.fullmatch(r"\d{8}", v):
+        # YYYYMMDD
+        y = int(v[:4])
+        if 2000 <= y <= 2099:
+            return f"{v[:4]}-{v[4:6]}-{v[6:8]}"
+        # MMDDYYYY
+        y2 = int(v[4:8])
+        if 2000 <= y2 <= 2099:
+            return f"{v[4:8]}-{v[:2]}-{v[2:4]}"
+        return v
+
+    return v
+
+
 def extractor_cayman_csl_library_version(normalized_html: str) -> List[str]:
     """
-    Cayman CSL 페이지에서 'library version'에 해당하는 버전 토큰만 추출.
-    결과 예: ["CSL Library version: 3.14"]
+    Cayman CSL 페이지에서 'library version'을 사람이 알아차리기 쉬운 형태로 추출.
+    1) CaymanSpectralLibrary_vYYYYMMDD 같은 다운로드 파일명에서 버전 추출 (가장 안정적)
+    2) 페이지 텍스트에서 Library Version/CSL Version 패턴 추출
+    3) 그래도 없으면 dateModified로 최소 토큰 확보
     """
+    # soup 텍스트 + 원문(태그/속성 포함) 둘 다 대상으로 탐색
     soup = BeautifulSoup(normalized_html, "html.parser")
-    text = soup.get_text(" ", strip=True)
-    text = re.sub(r"\s+", " ", text).strip()
+    text = clean_token(soup.get_text(" ", strip=True))
+    raw = html_lib.unescape(normalized_html)
 
-    # 1) 가장 명확한 패턴 우선
-    patterns = [
-        r"(?:Library\s*Version|CSL\s*Library\s*Version|CSL\s*Version)\s*[:#]?\s*(\d+(?:\.\d+)+)",
-        r"Cayman Spectral Library.{0,80}?Version\s*[:#]?\s*(\d+(?:\.\d+)+)",
-        r"CaymanSpectralLibrary[_-]v?(\d+(?:\.\d+)+)",
+    blob = text + "\n" + raw
+
+    # ✅ (가장 추천) 다운로드 파일명/링크에서 버전 추출
+    file_patterns = [
+        r"CaymanSpectralLibrary[_-]v?(\d{8})",          # CaymanSpectralLibrary_v04262019
+        r"CaymanSpectralLibrary[_-]v?(\d+(?:\.\d+)+)",  # CaymanSpectralLibrary_v3.14
     ]
+    hits: List[str] = []
+    for pat in file_patterns:
+        for m in re.finditer(pat, blob, flags=re.I):
+            hits.append(m.group(1).strip())
 
-    # 화면 텍스트 + 원문(정규화 HTML) 둘 다 탐색
-    for hay in (text, normalized_html):
-        for pat in patterns:
-            m = re.search(pat, hay, flags=re.I)
-            if m:
-                ver = m.group(1).strip()
-                return [f"CSL Library version: {ver}"]
+    if hits:
+        # 여러 개면 “가장 최신/큰 값”을 선택 (날짜형 우선)
+        best = None
+        best_key = None
 
-    # 2) fallback: 그래도 없으면 일반 Version 표기라도
-    m2 = re.search(r"\bVersion\s*[:#]?\s*(\d+(?:\.\d+)+)\b", text, flags=re.I)
-    if m2:
-        ver = m2.group(1).strip()
-        return [f"CSL Library version: {ver}"]
+        for v in hits:
+            vv = v.strip()
+            if re.fullmatch(r"\d{8}", vv):
+                # 날짜 비교 키 생성
+                fmt = _format_csl_version(vv)
+                # YYYY-MM-DD 형태면 그대로 비교 가능
+                key = ("date", fmt)
+            else:
+                # 버전 숫자 비교 (3.14 -> (3,14))
+                parts = tuple(int(x) for x in vv.split(".") if x.isdigit())
+                key = ("ver", parts)
+
+            if best_key is None or key > best_key:
+                best_key = key
+                best = vv
+
+        return [f"CSL Library version: {_format_csl_version(best)}"]
+
+    # 텍스트에서 버전 라벨 찾기
+    label_patterns = [
+        r"(?:Library\s*Version|CSL\s*Library\s*Version|CSL\s*Version)\s*[:#]?\s*(\d{8}|\d+(?:\.\d+)+)",
+    ]
+    for pat in label_patterns:
+        m = re.search(pat, blob, flags=re.I)
+        if m:
+            v = m.group(1).strip()
+            return [f"CSL Library version: {_format_csl_version(v)}"]
+
+    # 마지막 fallback: dateModified
+    m = re.search(r'"dateModified"\s*:\s*"([^"]+)"', blob, flags=re.I)
+    if m:
+        return [f"CSL dateModified: {m.group(1).strip()}"]
 
     return []
 
-
 def extractor_cayman_csl_fallback(normalized_html: str) -> List[str]:
     """
-    CSL이 JS 렌더링/레이아웃 변경으로 heading 탐지가 실패할 때 대비.
+    CSL이 구조 변경/렌더 실패 등으로 version 추출이 안 될 때:
+    - dateModified / datePublished 같은 최소 단서만 토큰으로 사용
+    - (Version info/Additions 큰 덩어리 캡처는 제거: 사람이 보기 힘들고 엔티티 섞임)
     """
+    raw = html_lib.unescape(normalized_html)
+
     patterns = [
         r'"dateModified"\s*:\s*"([^"]+)"',
         r'"datePublished"\s*:\s*"([^"]+)"',
-        r'"lastModified"\s*:\s*"([^"]+)"',
         r"\bLast\s+updated\b[^<]{0,120}",
         r"\bUpdated\b[^<]{0,120}",
-        r"(Version\s*info.{0,600})",
-        r"(Additions.{0,900})",
+        r"CaymanSpectralLibrary[_-]v?(\d{8}|\d+(?:\.\d+)+)",
     ]
-    raw = extract_by_regex_list(normalized_html, patterns, max_tokens=20)
-    cleaned = []
-    for t in raw:
-        t2 = re.sub(r"<[^>]+>", " ", t)
-        t2 = re.sub(r"\s+", " ", t2).strip()
-        if t2:
-            cleaned.append(t2)
-    return cleaned[:8]
+
+    tokens = extract_by_regex_list(raw, patterns, max_tokens=10)
+    cleaned = [clean_token(t) for t in tokens]
+    cleaned = [t for t in cleaned if t]
+
+    out: List[str] = []
+    for t in cleaned:
+        # 버전처럼 보이면 라벨 통일
+        if re.fullmatch(r"\d{8}", t) or re.fullmatch(r"\d+(?:\.\d+)+", t):
+            out.append(f"CSL Library version: {_format_csl_version(t)}")
+        else:
+            out.append(t)
+
+    # 너무 많이 잡히지 않게 제한
+    return out[:6]
 
 def extractor_cayman_new_products_names(normalized_html: str) -> List[str]:
     """
-    Cayman 'New Products' 영역에서 제품명/물질명 토큰을 추출.
-    - Item No 위주 토큰은 배제
-    - 카테고리/필터 문구는 배제
+    Cayman New Products에서 물질명/제품명을 추출.
+    - /product/<id>/... 링크의 텍스트(또는 aria-label/title)를 최우선 사용
+    - 텍스트가 비면 slug로 최소 이름 생성(그래도 itemno보다는 낫게)
     """
     soup = BeautifulSoup(normalized_html, "html.parser")
-    text = soup.get_text(" ", strip=True)
-    text = re.sub(r"\s+", " ", text).strip()
 
-    # New Products 섹션 이후 텍스트 일부만 사용(너무 넓으면 잡음↑)
-    m = re.search(r"New Products(.{0,3500})", text, flags=re.I)
-    chunk = m.group(1) if m else text
-    chunk = chunk.replace("·", "|")  # Cayman 페이지에서 자주 쓰는 구분자
-
-    parts = [p.strip() for p in chunk.split("|")]
-
-    reject_contains = [
-        "FORENSIC SCIENCE PRODUCTS",
-        "Forensic Chemistry",
-        "Toxicology",
-        "Type",
-        "Grade",
-        "Regulatory",
-        "View New Products",
-        "In stock",
-        "BULK",
-        "CUSTOM",
-        "BOOKMARK",
-        "LEARN MORE",
-        "Item No",
-        "CAS No",
-        "Purity",
-        "Formulation",
-        "Schedule",
-        "Results",
-        "Search",
-        "$",
-    ]
+    reject_words = {
+        "add to cart", "learn more", "view", "search", "filter", "sort",
+        "forensics", "products", "new products", "results", "item no",
+    }
 
     names: List[str] = []
-    for p in parts:
-        if not p:
-            continue
-        if len(p) < 3 or len(p) > 90:
-            continue
-        lp = p.lower()
-
-        if any(x.lower() in lp for x in reject_contains):
+    for a in soup.find_all("a", href=True):
+        href = a.get("href") or ""
+        if not re.search(r"/product/\d{4,8}/", href):
             continue
 
-        # 숫자만/가격 같은 것 제거
-        if re.fullmatch(r"\d+", p):
+        txt = a.get_text(" ", strip=True) or a.get("aria-label") or a.get("title") or ""
+        txt = clean_token(txt)
+
+        if not txt:
+            # 텍스트가 없으면 slug로 최소 이름 생성
+            m = re.search(r"/product/\d{4,8}/([^?#/]+)", href)
+            if m:
+                txt = clean_token(m.group(1).replace("-", " "))
+
+        low = txt.lower()
+        if not txt or len(txt) < 4 or len(txt) > 90:
+            continue
+        if any(w in low for w in reject_words):
+            continue
+        # 숫자만이면 제외
+        if re.fullmatch(r"\d+", txt):
+            continue
+        # 알파벳이 전혀 없으면(거의 UI 텍스트 가능성) 제외
+        if not re.search(r"[A-Za-z]", txt):
             continue
 
-        # 너무 일반적인 문구(설명문) 제거
-        if re.search(r"reference standard|certified reference material|screening", lp):
-            continue
+        names.append(txt)
 
-        names.append(p)
-
-    # 중복 제거(순서 유지)
+    # 중복 제거(대소문자 무시)
     uniq: List[str] = []
-    seen = set()
+    seen: Set[str] = set()
     for n in names:
-        if n in seen:
+        k = n.lower()
+        if k in seen:
             continue
-        seen.add(n)
+        seen.add(k)
         uniq.append(n)
-        if len(uniq) >= 120:
-            break
 
-    return uniq
+    # 순서 흔들림(정렬/리렌더)로 인한 불필요 변경을 줄이려면 정렬 추천
+    uniq = sorted(uniq, key=lambda s: s.lower())
+
+    return uniq[:200]
     
 def extractor_cayman_itemno(normalized_html: str) -> List[str]:
     patterns = [r"\bItem\s*No\.?\s*[:#]?\s*(\d{4,8})\b"]
@@ -917,21 +970,19 @@ def run_monitoring(session: requests.Session, prev_state: dict) -> Tuple[List[di
             key="cayman_csl",
             name="Cayman CSL Library",
             url="https://www.caymanchem.com/forensics/publications/csl",
-            extractor=extractor_cayman_csl_library_version,   # ✅ library version 토큰
+            extractor=extractor_cayman_csl_library_version,  # ✅ library version
             fallback_extractor=extractor_cayman_csl_fallback,
             soften_dates=False,
             use_playwright=True,
-            keep_jsonld=True,                                 # ✅ CSL은 JSON-LD 유지
         ),
         MonitorSpec(
             key="cayman_new_products",
             name="Cayman New Products",
             url="https://www.caymanchem.com/forensics/search/productSearch",
-            extractor=extractor_cayman_new_products_names,    # ✅ 물질명/제품명 토큰
-            fallback_extractor=extractor_cayman_itemno,        # 최후 fallback
+            extractor=extractor_cayman_new_products_names,   # ✅ 물질명
+            fallback_extractor=extractor_cayman_itemno,       # 최후 보험
             soften_dates=True,
             use_playwright=True,
-            keep_jsonld=False,
         ),
     ]
 

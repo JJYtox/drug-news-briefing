@@ -911,6 +911,7 @@ def run_monitoring(session: requests.Session, prev_state: dict) -> Tuple[List[di
             extractor=extractor_swgdrug_additional_resources_3_5,
             soften_dates=False,
             use_playwright=False,
+            keep_jsonld=False,
         ),
         MonitorSpec(
             key="cayman_csl",
@@ -920,16 +921,17 @@ def run_monitoring(session: requests.Session, prev_state: dict) -> Tuple[List[di
             fallback_extractor=extractor_cayman_csl_fallback,
             soften_dates=False,
             use_playwright=True,
-            keep_jsonld=True,                                 # ✅ CSL만 JSON-LD 유지
+            keep_jsonld=True,                                 # ✅ CSL은 JSON-LD 유지
         ),
         MonitorSpec(
             key="cayman_new_products",
             name="Cayman New Products",
             url="https://www.caymanchem.com/forensics/search/productSearch",
-            extractor=extractor_cayman_new_products_names,
-            fallback_extractor=extractor_cayman_itemno,  # 최후 fallback(이름 못 뽑을 때만)
+            extractor=extractor_cayman_new_products_names,    # ✅ 물질명/제품명 토큰
+            fallback_extractor=extractor_cayman_itemno,        # 최후 fallback
             soften_dates=True,
             use_playwright=True,
+            keep_jsonld=False,
         ),
     ]
 
@@ -947,17 +949,19 @@ def run_monitoring(session: requests.Session, prev_state: dict) -> Tuple[List[di
         "failed": failed,
     }
 
-new_state = dict(prev_state) if isinstance(prev_state, dict) else {}
-for r in results:
-    if r.get("ok") and r.get("hash"):
-        new_state[r["key"]] = {
-            "hash": r["hash"],
-            "token_count": r.get("token_count", 0),
-            "tokens_head": r.get("tokens_head", [])[:12],
-            "fetched_kst": r.get("fetched_kst", ""),
-            "url": r.get("url", ""),
-            "name": r.get("name", ""),
-        }
+    # ✅ FAIL이 나도 이전 성공 state를 유지(토큰 미리보기/비교 안정화)
+    new_state: dict = dict(prev_state) if isinstance(prev_state, dict) else {}
+
+    for r in results:
+        if r.get("ok") and r.get("hash"):
+            new_state[r["key"]] = {
+                "hash": r["hash"],
+                "token_count": r.get("token_count", 0),
+                "tokens_head": r.get("tokens_head", [])[:12],
+                "fetched_kst": r.get("fetched_kst", ""),
+                "url": r.get("url", ""),
+                "name": r.get("name", ""),
+            }
 
     meta = {
         "generated_kst": datetime.now(KST).isoformat(timespec="minutes"),

@@ -460,12 +460,14 @@ def render_news_html(event_clusters: List[dict], stats: dict) -> str:
         ts = f"<span class='meta'>{escape_html(rep['published_kst'])}</span>"
 
         # 대표 기사
+        badge_extra = f" <span class='badge small'>+{extra_n}건</span>" if extra_n else ""
+
         head = (
             f"<div class='event-head'>"
             f"<span class='event-no'>[사건 {idx}]</span> "
             f"{pub}<a href='{escape_attr(rep['link'])}' target='_blank' rel='noopener noreferrer'>"
             f"{escape_html(rep['title'])}</a> {ts}"
-            f"{f\" <span class='badge small'>+{extra_n}건</span>\" if extra_n else ''}"
+            f"{badge_extra}"
             f"</div>"
         )
 

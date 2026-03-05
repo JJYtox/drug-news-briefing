@@ -1189,31 +1189,7 @@ def build_page_html(news_html: str, monitor_html: str, meta: dict) -> str:
   <link rel="stylesheet" href="./style.css">
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>마약류 뉴스 브리핑 + 감시 점검</title>
-  <style>
-    body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; line-height: 1.55; margin: 24px; }}
-    h1 {{ margin: 0 0 6px 0; font-size: 22px; }}
-    h2 {{ margin-top: 22px; font-size: 18px; }}
-    .meta {{ color: #666; font-size: 12px; margin-left: 6px; }}
-    .badge {{ display:inline-block; padding:4px 10px; border:1px solid #ddd; border-radius:999px; margin:0 6px 6px 0; font-size:13px; }}
-    .badge.small {{ font-size: 12px; padding: 2px 8px; }}
-    .kpi {{ margin: 10px 0 8px 0; }}
-    a {{ color: inherit; }}
-    ul {{ padding-left: 18px; }}
-    li {{ margin: 6px 0; }}
-    details {{ margin-top: 12px; }}
-    summary {{ cursor: pointer; font-weight: 700; }}
-    .box {{ margin-top: 10px; padding: 10px; border: 1px solid #eee; border-radius: 10px; }}
-    .table {{ width: 100%; border-collapse: collapse; }}
-    .table th, .table td {{ border-bottom: 1px solid #eee; padding: 8px; font-size: 13px; vertical-align: top; }}
-    .footer {{ margin-top: 18px; color: #777; font-size: 12px; }}
-
-    .event {{ border: 1px solid #eee; border-radius: 12px; padding: 10px 12px; margin: 10px 0; }}
-    .event-head {{ font-size: 14px; }}
-    .event-no {{ font-weight: 800; margin-right: 6px; }}
-    .event-more summary {{ font-weight: 600; font-size: 13px; }}
-    code {{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; }}
-  </style>
+  <title>마약류 뉴스 브리핑 + 감시 점검</title> 
 </head>
 <body>
   <div class="container">

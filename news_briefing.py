@@ -1183,20 +1183,22 @@ def escape_md(s: str) -> str:
 
 def build_page_html(news_html: str, monitor_html: str, meta: dict) -> str:
     generated_kst = meta.get("generated_kst", "")
+
     return f"""<!doctype html>
 <html lang="ko">
 <head>
-  <link rel="stylesheet" href="./style.css">
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>마약류 뉴스 브리핑 + 감시 점검</title> 
+  <meta name="color-scheme" content="light dark"/>
+  <title>마약류 뉴스 브리핑 + 감시 점검</title>
+  <link rel="stylesheet" href="./style.css">
 </head>
 <body>
   <div class="container">
     <div class="header">
       <div>
         <h1>마약류 뉴스 브리핑 + 감시 점검</h1>
-        <div class="subline">생성 시각(KST): ...</div>
+        <div class="subline">생성 시각(KST): {escape_html(generated_kst)}</div>
       </div>
     </div>
 
@@ -1204,15 +1206,14 @@ def build_page_html(news_html: str, monitor_html: str, meta: dict) -> str:
       <div class="section-head">
         <h2>뉴스 브리핑 (최근 24시간)</h2>
       </div>
-      <!-- kpi + events -->
-      {{news_html}}
+      {news_html}
     </div>
 
     <div class="section">
       <div class="section-head">
         <h2>감시 사이트 업데이트 점검</h2>
       </div>
-      {{monitor_html}}
+      {monitor_html}
     </div>
   </div>
 </body>

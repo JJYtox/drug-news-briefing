@@ -659,108 +659,124 @@ def extractor_swgdrug_additional_resources_3_5(normalized_html: str) -> List[str
 
     return tokens[:6]
 
+def _csl_date_from_8digits_dmy(v8: str) -> Optional[str]:
+    """
+    CSL 버전이 8자리 숫자일 때 DMY(DDMMYYYY)로 해석해 YYYY-MM-DD로 반환.
+    - DMY가 유효하지 않으면(예: 05162013 -> 월=16) None
+    - (안전망) YYYYMMDD 형태로만 유효하면 그걸로 반환
+    - MMDDYYYY는 의도적으로 해석하지 않음(과거 파일명이 섞일 때 오탐 방지)
+    """
+    digits = re.sub(r"\D", "", v8 or "")
+    if len(digits) != 8:
+        return None
+
+    # 1) DMY: DDMMYYYY
+    d = int(digits[0:2])
+    m = int(digits[2:4])
+    y = int(digits[4:8])
+    try:
+        dt = datetime(y, m, d)
+        return dt.strftime("%Y-%m-%d")
+    except ValueError:
+        pass
+
+    # 2) (안전망) YYYYMMDD만 유효하면 그쪽으로
+    y2 = int(digits[0:4])
+    m2 = int(digits[4:6])
+    d2 = int(digits[6:8])
+    try:
+        dt2 = datetime(y2, m2, d2)
+        return dt2.strftime("%Y-%m-%d")
+    except ValueError:
+        return None
+
+
 def _format_csl_version(v: str) -> str:
     """
-    CSL 버전이 8자리 숫자로 올 때(예: 04262019, 20252805 등)
-    YYYYMMDD / YYYYDDMM / MMDDYYYY / DDMMYYYY 를 시도해서
-    '유효한 날짜'로 해석 가능한 경우 YYYY-MM-DD로 반환.
-    그 외(3.14 같은 버전)는 원문 그대로 반환.
+    - 8자리면 DMY(DDMMYYYY) 우선으로 YYYY-MM-DD 변환
+    - 아니면 원문 그대로
     """
     v = (v or "").strip()
     digits = re.sub(r"\D", "", v)
-
-    if len(digits) != 8:
-        return v
-
-    def is_valid_date(y: int, m: int, d: int) -> bool:
-        try:
-            datetime(y, m, d)
-            return True
-        except ValueError:
-            return False
-
-    candidates = [
-        # 1) YYYYMMDD
-        (int(digits[:4]), int(digits[4:6]), int(digits[6:8])),
-        # 2) YYYYDDMM  (20252805 -> 2025-05-28)
-        (int(digits[:4]), int(digits[6:8]), int(digits[4:6])),
-        # 3) MMDDYYYY  (04262019 -> 2019-04-26)
-        (int(digits[4:8]), int(digits[:2]), int(digits[2:4])),
-        # 4) DDMMYYYY
-        (int(digits[4:8]), int(digits[2:4]), int(digits[:2])),
-    ]
-
-    for y, m, d in candidates:
-        if 2000 <= y <= 2099 and is_valid_date(y, m, d):
-            return f"{y:04d}-{m:02d}-{d:02d}"
-
-    # 어떤 포맷으로도 유효한 날짜가 아니면 원문 유지
+    if len(digits) == 8:
+        out = _csl_date_from_8digits_dmy(digits)
+        if out:
+            return out
     return v
+
+def _extract_section_text_by_heading(soup: BeautifulSoup, heading_contains: str, max_chars: int = 8000) -> str:
+    """
+    h1~h6 중 heading_contains(예: 'Version info')를 포함하는 heading을 찾고
+    그 다음 heading 전까지의 텍스트를 모아 반환.
+    """
+    heading = None
+    target = heading_contains.lower()
+
+    for tag in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
+        t = tag.get_text(" ", strip=True)
+        if t and target in t.lower():
+            heading = tag
+            break
+
+    if not heading:
+        return ""
+
+    texts: List[str] = []
+    for sib in heading.find_all_next():
+        if sib.name in ["h1", "h2", "h3", "h4", "h5", "h6"]:
+            break
+        if sib.name in ["script", "style", "noscript"]:
+            continue
+        tx = sib.get_text(" ", strip=True) if hasattr(sib, "get_text") else ""
+        if tx:
+            texts.append(tx)
+        if len(" ".join(texts)) >= max_chars:
+            break
+
+    return re.sub(r"\s+", " ", " ".join(texts)).strip()
+
 
 def extractor_cayman_csl_library_version(normalized_html: str) -> List[str]:
     """
-    Cayman CSL 페이지에서 'library version'을 사람이 알아차리기 쉬운 형태로 추출.
-    1) CaymanSpectralLibrary_vYYYYMMDD 같은 다운로드 파일명에서 버전 추출 (가장 안정적)
-    2) 페이지 텍스트에서 Library Version/CSL Version 패턴 추출
-    3) 그래도 없으면 dateModified로 최소 토큰 확보
+    Cayman CSL:
+    - 홈페이지의 Version info 섹션은 최신 버전이 가장 위에 오도록 설계되어 있으므로
+      'Version info' 섹션에서 첫 번째 CaymanSpectralLibrary_vXXXXXXXX 를 읽는다.
+    - 날짜는 DMY(DDMMYYYY)로 해석하여 YYYY-MM-DD로 표출한다.
     """
-    # soup 텍스트 + 원문(태그/속성 포함) 둘 다 대상으로 탐색
     soup = BeautifulSoup(normalized_html, "html.parser")
-    text = clean_token(soup.get_text(" ", strip=True))
-    raw = html_lib.unescape(normalized_html)
 
-    blob = text + "\n" + raw
+    # 1) Version info 섹션만 우선 사용 (최신이 맨 위)
+    section = _extract_section_text_by_heading(soup, "Version info")
+    if section:
+        section = clean_token(section)
+    else:
+        # heading 탐지가 실패하면 전체 텍스트(차선)
+        section = clean_token(soup.get_text(" ", strip=True))
 
-    # ✅ (가장 추천) 다운로드 파일명/링크에서 버전 추출
-    file_patterns = [
-        r"CaymanSpectralLibrary[_-]v?(\d{8})",          # CaymanSpectralLibrary_v04262019
-        r"CaymanSpectralLibrary[_-]v?(\d+(?:\.\d+)+)",  # CaymanSpectralLibrary_v3.14
-    ]
-    hits: List[str] = []
-    for pat in file_patterns:
-        for m in re.finditer(pat, blob, flags=re.I):
-            hits.append(m.group(1).strip())
+    # 2) "Version: CaymanSpectralLibrary_v10122025" 같은 라인에서 첫 매치
+    m = re.search(
+        r"\bVersion\s*:\s*CaymanSpectralLibrary[_-]v?(\d{8}|\d+(?:\.\d+)+)\b",
+        section,
+        flags=re.I,
+    )
+    if not m:
+        # 3) 그래도 없으면 섹션 내 첫 CaymanSpectralLibrary_v... (첫 번째가 최신)
+        m = re.search(r"CaymanSpectralLibrary[_-]v?(\d{8}|\d+(?:\.\d+)+)", section, flags=re.I)
 
-    if hits:
-        # 여러 개면 “가장 최신/큰 값”을 선택 (날짜형 우선)
-        best = None
-        best_key = None
-
-        for v in hits:
-            vv = v.strip()
-            if re.fullmatch(r"\d{8}", vv):
-                fmt = _format_csl_version(vv)
-                # 날짜로 정상 해석되면 최우선(2)
-                if re.fullmatch(r"\d{4}-\d{2}-\d{2}", fmt):
-                    key = (2, fmt)
-                else:
-                    key = (0, vv)  # 날짜 해석 실패한 8자리면 최하
-        else:
-            parts = tuple(int(x) for x in vv.split(".") if x.isdigit())
-            key = (1, parts)  # 버전은 날짜보다 아래(1)
-
-            if best_key is None or key > best_key:
-                best_key = key
-                best = vv
-
-        return [f"CSL Library version: {_format_csl_version(best)}"]
-
-    # 텍스트에서 버전 라벨 찾기
-    label_patterns = [
-        r"(?:Library\s*Version|CSL\s*Library\s*Version|CSL\s*Version)\s*[:#]?\s*(\d{8}|\d+(?:\.\d+)+)",
-    ]
-    for pat in label_patterns:
-        m = re.search(pat, blob, flags=re.I)
-        if m:
-            v = m.group(1).strip()
-            return [f"CSL Library version: {_format_csl_version(v)}"]
-
-    # 마지막 fallback: dateModified
-    m = re.search(r'"dateModified"\s*:\s*"([^"]+)"', blob, flags=re.I)
     if m:
-        return [f"CSL dateModified: {m.group(1).strip()}"]
+        raw_v = m.group(1).strip()
+        fmt = _format_csl_version(raw_v)
+        # 날짜만 보여주고 싶으면 아래 한 줄로:
+        return [f"CSL Library version: {fmt}"]
+
+    # 4) 최후 fallback: JSON-LD/원문에서 dateModified라도
+    raw = html_lib.unescape(normalized_html)
+    m2 = re.search(r'"dateModified"\s*:\s*"([^"]+)"', raw, flags=re.I)
+    if m2:
+        return [f"CSL dateModified: {m2.group(1).strip()}"]
 
     return []
+
 
 def extractor_cayman_csl_fallback(normalized_html: str) -> List[str]:
     """
@@ -988,10 +1004,11 @@ def run_monitoring(session: requests.Session, prev_state: dict) -> Tuple[List[di
             key="cayman_csl",
             name="Cayman CSL Library",
             url="https://www.caymanchem.com/forensics/publications/csl",
-            extractor=extractor_cayman_csl_library_version,  # ✅ library version
+            extractor=extractor_cayman_csl_library_version,
             fallback_extractor=extractor_cayman_csl_fallback,
             soften_dates=False,
             use_playwright=True,
+            keep_jsonld=True,
         ),
         MonitorSpec(
             key="cayman_new_products",

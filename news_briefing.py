@@ -1186,6 +1186,7 @@ def build_page_html(news_html: str, monitor_html: str, meta: dict) -> str:
     return f"""<!doctype html>
 <html lang="ko">
 <head>
+  <link rel="stylesheet" href="./style.css">
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>마약류 뉴스 브리핑 + 감시 점검</title>

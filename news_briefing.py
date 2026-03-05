@@ -693,21 +693,28 @@ def _csl_date_from_8digits_dmy(v8: str) -> Optional[str]:
 
 def _format_csl_version(v: str) -> str:
     """
-    - 8자리면 DMY(DDMMYYYY) 우선으로 YYYY-MM-DD 변환
-    - 아니면 원문 그대로
+    8자리면 DMY(DDMMYYYY)로만 해석해 YYYY-MM-DD 반환.
+    (MMDDYYYY는 의도적으로 해석하지 않음: 과거 파일명 오탐 방지)
     """
     v = (v or "").strip()
     digits = re.sub(r"\D", "", v)
+
     if len(digits) == 8:
-        out = _csl_date_from_8digits_dmy(digits)
-        if out:
-            return out
+        d = int(digits[0:2])
+        m = int(digits[2:4])
+        y = int(digits[4:8])
+        try:
+            return datetime(y, m, d).strftime("%Y-%m-%d")
+        except ValueError:
+            # DMY로 성립 안 하면 원문 유지
+            return v
+
     return v
 
-def _extract_section_text_by_heading(soup: BeautifulSoup, heading_contains: str, max_chars: int = 8000) -> str:
+def _extract_section_html_by_heading(soup: BeautifulSoup, heading_contains: str, max_chars: int = 15000) -> str:
     """
-    h1~h6 중 heading_contains(예: 'Version info')를 포함하는 heading을 찾고
-    그 다음 heading 전까지의 텍스트를 모아 반환.
+    heading_contains(예: 'Version info')를 포함하는 heading 이후,
+    다음 heading 전까지의 'HTML 문자열'을 반환 (href 등 속성 포함).
     """
     heading = None
     target = heading_contains.lower()
@@ -721,57 +728,48 @@ def _extract_section_text_by_heading(soup: BeautifulSoup, heading_contains: str,
     if not heading:
         return ""
 
-    texts: List[str] = []
+    parts: List[str] = []
+    total = 0
     for sib in heading.find_all_next():
         if sib.name in ["h1", "h2", "h3", "h4", "h5", "h6"]:
             break
         if sib.name in ["script", "style", "noscript"]:
             continue
-        tx = sib.get_text(" ", strip=True) if hasattr(sib, "get_text") else ""
-        if tx:
-            texts.append(tx)
-        if len(" ".join(texts)) >= max_chars:
+        s = str(sib)
+        parts.append(s)
+        total += len(s)
+        if total >= max_chars:
             break
 
-    return re.sub(r"\s+", " ", " ".join(texts)).strip()
+    return " ".join(parts)
 
 
 def extractor_cayman_csl_library_version(normalized_html: str) -> List[str]:
     """
     Cayman CSL:
-    - 홈페이지의 Version info 섹션은 최신 버전이 가장 위에 오도록 설계되어 있으므로
-      'Version info' 섹션에서 첫 번째 CaymanSpectralLibrary_vXXXXXXXX 를 읽는다.
-    - 날짜는 DMY(DDMMYYYY)로 해석하여 YYYY-MM-DD로 표출한다.
+    - Version info 섹션은 최신이 가장 위 → 그 섹션에서 첫 번째 CaymanSpectralLibrary_v...만 사용
+    - 날짜는 DMY(DDMMYYYY)로 YYYY-MM-DD 표출
     """
     soup = BeautifulSoup(normalized_html, "html.parser")
 
-    # 1) Version info 섹션만 우선 사용 (최신이 맨 위)
-    section = _extract_section_text_by_heading(soup, "Version info")
-    if section:
-        section = clean_token(section)
+    # 1) Version info 섹션 HTML(링크 href 포함) 우선
+    sec_html = _extract_section_html_by_heading(soup, "Version info")
+    if sec_html:
+        blob = html_lib.unescape(sec_html)
     else:
-        # heading 탐지가 실패하면 전체 텍스트(차선)
-        section = clean_token(soup.get_text(" ", strip=True))
+        # heading 탐지 실패 시 전체 HTML로 차선
+        blob = html_lib.unescape(normalized_html)
 
-    # 2) "Version: CaymanSpectralLibrary_v10122025" 같은 라인에서 첫 매치
-    m = re.search(
-        r"\bVersion\s*:\s*CaymanSpectralLibrary[_-]v?(\d{8}|\d+(?:\.\d+)+)\b",
-        section,
-        flags=re.I,
-    )
-    if not m:
-        # 3) 그래도 없으면 섹션 내 첫 CaymanSpectralLibrary_v... (첫 번째가 최신)
-        m = re.search(r"CaymanSpectralLibrary[_-]v?(\d{8}|\d+(?:\.\d+)+)", section, flags=re.I)
-
+    # 2) 섹션 내 '첫 번째' CaymanSpectralLibrary_v... 가 최신(페이지 설계 가정)
+    m = re.search(r"CaymanSpectralLibrary[_-]v?(\d{8}|\d+(?:\.\d+)+)", blob, flags=re.I)
     if m:
         raw_v = m.group(1).strip()
         fmt = _format_csl_version(raw_v)
-        # 날짜만 보여주고 싶으면 아래 한 줄로:
-        return [f"CSL Library version: {fmt}"]
+        # 원문도 남기고 싶으면 (v{raw_v}) 유지, 싫으면 제거
+        return [f"CSL Library version: {fmt} (v{raw_v})"]
 
-    # 4) 최후 fallback: JSON-LD/원문에서 dateModified라도
-    raw = html_lib.unescape(normalized_html)
-    m2 = re.search(r'"dateModified"\s*:\s*"([^"]+)"', raw, flags=re.I)
+    # 3) 최후 fallback: dateModified만
+    m2 = re.search(r'"dateModified"\s*:\s*"([^"]+)"', html_lib.unescape(normalized_html), flags=re.I)
     if m2:
         return [f"CSL dateModified: {m2.group(1).strip()}"]
 
@@ -779,36 +777,17 @@ def extractor_cayman_csl_library_version(normalized_html: str) -> List[str]:
 
 
 def extractor_cayman_csl_fallback(normalized_html: str) -> List[str]:
-    """
-    CSL이 구조 변경/렌더 실패 등으로 version 추출이 안 될 때:
-    - dateModified / datePublished 같은 최소 단서만 토큰으로 사용
-    - (Version info/Additions 큰 덩어리 캡처는 제거: 사람이 보기 힘들고 엔티티 섞임)
-    """
     raw = html_lib.unescape(normalized_html)
+    m = re.search(r'"dateModified"\s*:\s*"([^"]+)"', raw, flags=re.I)
+    if m:
+        return [f"CSL dateModified: {m.group(1).strip()}"]
 
-    patterns = [
-        r'"dateModified"\s*:\s*"([^"]+)"',
-        r'"datePublished"\s*:\s*"([^"]+)"',
-        r"\bLast\s+updated\b[^<]{0,120}",
-        r"\bUpdated\b[^<]{0,120}",
-        r"CaymanSpectralLibrary[_-]v?(\d{8}|\d+(?:\.\d+)+)",
-    ]
+    m2 = re.search(r"\bLast\s+updated\b[^<]{0,120}", raw, flags=re.I)
+    if m2:
+        return [clean_token(m2.group(0))]
 
-    tokens = extract_by_regex_list(raw, patterns, max_tokens=10)
-    cleaned = [clean_token(t) for t in tokens]
-    cleaned = [t for t in cleaned if t]
-
-    out: List[str] = []
-    for t in cleaned:
-        # 버전처럼 보이면 라벨 통일
-        if re.fullmatch(r"\d{8}", t) or re.fullmatch(r"\d+(?:\.\d+)+", t):
-            out.append(f"CSL Library version: {_format_csl_version(t)}")
-        else:
-            out.append(t)
-
-    # 너무 많이 잡히지 않게 제한
-    return out[:6]
-
+    return []
+    
 def extractor_cayman_new_products_names(normalized_html: str) -> List[str]:
     """
     Cayman New Products에서 물질명/제품명을 추출.

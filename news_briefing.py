@@ -661,24 +661,41 @@ def extractor_swgdrug_additional_resources_3_5(normalized_html: str) -> List[str
 
 def _format_csl_version(v: str) -> str:
     """
-    v가 8자리 숫자면 날짜형(YYYYMMDD 또는 MMDDYYYY)으로 보기 좋게 변환.
-    그 외(3.14 같은 버전)는 그대로 둔다.
+    CSL 버전이 8자리 숫자로 올 때(예: 04262019, 20252805 등)
+    YYYYMMDD / YYYYDDMM / MMDDYYYY / DDMMYYYY 를 시도해서
+    '유효한 날짜'로 해석 가능한 경우 YYYY-MM-DD로 반환.
+    그 외(3.14 같은 버전)는 원문 그대로 반환.
     """
     v = (v or "").strip()
+    digits = re.sub(r"\D", "", v)
 
-    if re.fullmatch(r"\d{8}", v):
-        # YYYYMMDD
-        y = int(v[:4])
-        if 2000 <= y <= 2099:
-            return f"{v[:4]}-{v[4:6]}-{v[6:8]}"
-        # MMDDYYYY
-        y2 = int(v[4:8])
-        if 2000 <= y2 <= 2099:
-            return f"{v[4:8]}-{v[:2]}-{v[2:4]}"
+    if len(digits) != 8:
         return v
 
-    return v
+    def is_valid_date(y: int, m: int, d: int) -> bool:
+        try:
+            datetime(y, m, d)
+            return True
+        except ValueError:
+            return False
 
+    candidates = [
+        # 1) YYYYMMDD
+        (int(digits[:4]), int(digits[4:6]), int(digits[6:8])),
+        # 2) YYYYDDMM  (20252805 -> 2025-05-28)
+        (int(digits[:4]), int(digits[6:8]), int(digits[4:6])),
+        # 3) MMDDYYYY  (04262019 -> 2019-04-26)
+        (int(digits[4:8]), int(digits[:2]), int(digits[2:4])),
+        # 4) DDMMYYYY
+        (int(digits[4:8]), int(digits[2:4]), int(digits[:2])),
+    ]
+
+    for y, m, d in candidates:
+        if 2000 <= y <= 2099 and is_valid_date(y, m, d):
+            return f"{y:04d}-{m:02d}-{d:02d}"
+
+    # 어떤 포맷으로도 유효한 날짜가 아니면 원문 유지
+    return v
 
 def extractor_cayman_csl_library_version(normalized_html: str) -> List[str]:
     """
@@ -712,14 +729,15 @@ def extractor_cayman_csl_library_version(normalized_html: str) -> List[str]:
         for v in hits:
             vv = v.strip()
             if re.fullmatch(r"\d{8}", vv):
-                # 날짜 비교 키 생성
                 fmt = _format_csl_version(vv)
-                # YYYY-MM-DD 형태면 그대로 비교 가능
-                key = ("date", fmt)
-            else:
-                # 버전 숫자 비교 (3.14 -> (3,14))
-                parts = tuple(int(x) for x in vv.split(".") if x.isdigit())
-                key = ("ver", parts)
+                # 날짜로 정상 해석되면 최우선(2)
+                if re.fullmatch(r"\d{4}-\d{2}-\d{2}", fmt):
+                    key = (2, fmt)
+                else:
+                    key = (0, vv)  # 날짜 해석 실패한 8자리면 최하
+        else:
+            parts = tuple(int(x) for x in vv.split(".") if x.isdigit())
+            key = (1, parts)  # 버전은 날짜보다 아래(1)
 
             if best_key is None or key > best_key:
                 best_key = key
@@ -1064,6 +1082,11 @@ def render_monitor_md(results: List[dict], summary: dict) -> str:
             lines.append(f"- 이전 해시: `{r.get('prev_hash','')}`")
             lines.append(f"- 현재 해시: `{r.get('hash','')}`")
             lines.append("")
+            lines.append("상단 토큰(이전):")
+            lines.append("")
+            for t in (r.get("prev_tokens_head", []) or [])[:12]:
+                lines.append(f"- {escape_md(shorten(str(t), 200))}")
+            lines.append("")
             lines.append("상단 토큰(현재):")
             lines.append("")
             for t in r.get("tokens_head", [])[:12]:
@@ -1090,7 +1113,22 @@ def render_monitor_html(results: List[dict], summary: dict) -> str:
             changed = "NO"
 
         toks = r.get("tokens_head", []) if r.get("ok") else (r.get("prev_tokens_head", []) or [])
-        preview = "<br>".join([escape_html(shorten(str(t), 55)) for t in toks[:3]]) if toks else ""
+        cur_toks = r.get("tokens_head", []) if r.get("ok") else (r.get("prev_tokens_head", []) or [])
+        cur_preview = "<br>".join([escape_html(shorten(str(t), 55)) for t in cur_toks[:3]]) if cur_toks else ""
+
+        preview_html = f"<code>{cur_preview}</code>"
+
+        # ✅ 변경(YES)인 경우: 이전 토큰도 같이 보여주기
+        if r.get("ok") and (r.get("changed") is True):
+            prev_toks = r.get("prev_tokens_head", []) or []
+            prev_preview = "<br>".join([escape_html(shorten(str(t), 55)) for t in prev_toks[:3]]) if prev_toks else ""
+            if prev_preview:
+                preview_html = (
+                    f"<div><span class='meta'>현재</span><br><code>{cur_preview}</code></div>"
+                    f"<div style='margin-top:6px'><span class='meta'>이전</span><br><code>{prev_preview}</code></div>"
+                )
+
+        # 그리고 rows.append에서 <td><code>...</code></td> 대신 preview_html을 그대로 넣기
         note = r.get("error", "") or ""
 
         rows.append(
@@ -1099,7 +1137,7 @@ def render_monitor_html(results: List[dict], summary: dict) -> str:
             f"<td>{escape_html(status)}</td>"
             f"<td>{escape_html(changed)}</td>"
             f"<td style='text-align:right'>{int(r.get('token_count',0) or 0)}</td>"
-            f"<td><code>{preview}</code></td>"
+            f"<td>{preview_html}</td>"
             f"<td>{escape_html(note)}</td>"
             "</tr>"
         )

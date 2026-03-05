@@ -1216,15 +1216,29 @@ def build_page_html(news_html: str, monitor_html: str, meta: dict) -> str:
   </style>
 </head>
 <body>
-  <h1>마약류 뉴스 브리핑 + 감시 점검</h1>
-  <div class="footer">생성 시각(KST): {escape_html(generated_kst)}</div>
+  <div class="container">
+    <div class="header">
+      <div>
+        <h1>마약류 뉴스 브리핑 + 감시 점검</h1>
+        <div class="subline">생성 시각(KST): ...</div>
+      </div>
+    </div>
 
-  <h2>뉴스 브리핑 (최근 24시간)</h2>
-  {news_html}
+    <div class="section">
+      <div class="section-head">
+        <h2>뉴스 브리핑 (최근 24시간)</h2>
+      </div>
+      <!-- kpi + events -->
+      {{news_html}}
+    </div>
 
-  <h2>감시 사이트 업데이트 점검</h2>
-  {monitor_html}
-
+    <div class="section">
+      <div class="section-head">
+        <h2>감시 사이트 업데이트 점검</h2>
+      </div>
+      {{monitor_html}}
+    </div>
+  </div>
 </body>
 </html>
 """

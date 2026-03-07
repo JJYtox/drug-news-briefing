@@ -1,0 +1,54 @@
+{
+  "meta": {
+    "generated_kst": "2026-03-07T09:00+09:00",
+    "summary": {
+      "date_kst": "2026-03-07",
+      "updated": 0,
+      "failed": 0
+    }
+  },
+  "sites": {
+    "swgdrug_home": {
+      "hash": "9b9798413e05e28167c93cc049ff52b9e310cc53a585b107386202a17e0715a8",
+      "token_count": 2,
+      "tokens_head": [
+        "SWGDRUG Recommendations v8.2 (approved June 27, 2024)",
+        "SWGDRUG MS Library v3.14 (dated January 22, 2025)"
+      ],
+      "fetched_kst": "2026-03-07T09:00+09:00",
+      "url": "https://swgdrug.org/",
+      "name": "SWGDRUG 홈"
+    },
+    "cayman_csl": {
+      "hash": "28239e885411bbd2aa716db2494a5d9cfe4cf388c3d1d66386e9151ae60998e8",
+      "token_count": 1,
+      "tokens_head": [
+        "CSL Library version: 2025-12-10 (v10122025)"
+      ],
+      "fetched_kst": "2026-03-07T09:00+09:00",
+      "url": "https://www.caymanchem.com/forensics/publications/csl",
+      "name": "Cayman CSL Library"
+    },
+    "cayman_new_products": {
+      "hash": "f3f5778e89c5701271fa25a02d3f1afe256e20a3078989da1b66841443eeaf8f",
+      "token_count": 26,
+      "tokens_head": [
+        "(+)-Clobenzorex (hydrochloride)",
+        "4-hydroxy Ethylbromazolam",
+        "6β-hydroxy Cannabidivarin",
+        "7-hydroxy Mitragynine (CRM)",
+        "Benzscaline (hydro chloride)",
+        "Chlorphine (hydrochloride)",
+        "Ethyl sulfate (sodium salt)",
+        "Etizolam- 13 C 2 -d 4 (CRM)",
+        "Go to product page",
+        "Methylfentanyl Isomer Mixture",
+        "Methylmethcathinone Isomer Mixture",
+        "N,N-dimethyl Hexylone (hydrochloride)"
+      ],
+      "fetched_kst": "2026-03-07T09:00+09:00",
+      "url": "https://www.caymanchem.com/forensics/search/productSearch",
+      "name": "Cayman New Products"
+    }
+  }
+}

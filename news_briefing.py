@@ -1045,8 +1045,8 @@ def render_monitor_md(results: List[dict], summary: dict) -> str:
     lines.append("")
     lines.append("## 결과")
     lines.append("")
-    lines.append("| 사이트 | 상태 | 변경 | 토큰수 | 토큰 미리보기 | 비고 |")
-    lines.append("|---|---:|---:|---:|---|---|")
+    lines.append("| 사이트 | 상태 | 변경 | 토큰수 | 토큰 미리보기 |")
+    lines.append("|---|---:|---:|---:|---|")
 
     for r in results:
         name = f"[{r['name']}]({r['url']})"
@@ -1064,9 +1064,7 @@ def render_monitor_md(results: List[dict], summary: dict) -> str:
 
         toks = r.get("tokens_head", []) if r.get("ok") else (r.get("prev_tokens_head", []) or [])
         preview = " / ".join([shorten(str(t), 45) for t in toks[:3]]) if toks else ""
-        note = r.get("error", "") or ""
-
-        lines.append(f"| {name} | {ok} | {changed} | {token_count} | {escape_md(preview)} | {escape_md(note)} |")
+        lines.append(f"| {name} | {ok} | {changed} | {token_count} | {escape_md(preview)} |")
 
     lines.append("")
     lines.append("## 변경 상세(상단 토큰)")
@@ -1095,7 +1093,7 @@ def render_monitor_md(results: List[dict], summary: dict) -> str:
 def render_monitor_html(results: List[dict], summary: dict) -> str:
     updated = int(summary.get("updated", 0) or 0)
     failed = int(summary.get("failed", 0) or 0)
-    open_attr = " open" if (updated > 0 or failed > 0) else ""
+    open_attr = " open"
 
     rows: List[str] = []
     for r in results:
@@ -1124,9 +1122,6 @@ def render_monitor_html(results: List[dict], summary: dict) -> str:
                     f"<div style='margin-top:6px'><span class='meta'>이전</span><br><code>{prev_preview}</code></div>"
                 )
 
-        # 그리고 rows.append에서 <td><code>...</code></td> 대신 preview_html을 그대로 넣기
-        note = r.get("error", "") or ""
-
         rows.append(
             "<tr>"
             f"<td><a href='{escape_attr(r['url'])}' target='_blank' rel='noopener noreferrer'>{escape_html(r['name'])}</a></td>"
@@ -1134,7 +1129,6 @@ def render_monitor_html(results: List[dict], summary: dict) -> str:
             f"<td>{escape_html(changed)}</td>"
             f"<td style='text-align:right'>{int(r.get('token_count',0) or 0)}</td>"
             f"<td>{preview_html}</td>"
-            f"<td>{escape_html(note)}</td>"
             "</tr>"
         )
 
@@ -1151,7 +1145,7 @@ def render_monitor_html(results: List[dict], summary: dict) -> str:
         f"<summary>감시 사이트 점검 결과 (업데이트 {updated} · 실패 {failed})</summary>"
         "<div class='box'>"
         "<table class='table'>"
-        "<thead><tr><th>사이트</th><th>상태</th><th>변경</th><th style='text-align:right'>토큰수</th><th>토큰 미리보기</th><th>비고</th></tr></thead>"
+        "<thead><tr><th>사이트</th><th>상태</th><th>변경</th><th style='text-align:right'>토큰수</th><th>토큰 미리보기</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody>"
         "</table>"
         "</div>"

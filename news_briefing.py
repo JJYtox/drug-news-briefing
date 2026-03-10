@@ -1045,13 +1045,11 @@ def render_monitor_md(results: List[dict], summary: dict) -> str:
     lines.append("")
     lines.append("## 결과")
     lines.append("")
-    lines.append("| 사이트 | 상태 | 변경 | 토큰수 | 토큰 미리보기 |")
-    lines.append("|---|---:|---:|---:|---|")
+    lines.append("| 사이트 | 변경 | 토큰 미리보기 |")
+    lines.append("|---|---:|---|")
 
     for r in results:
         name = f"[{r['name']}]({r['url']})"
-        ok = "OK" if r.get("ok") else "FAIL"
-
         ch = r.get("changed")
         if ch is True:
             changed = "YES"
@@ -1060,11 +1058,9 @@ def render_monitor_md(results: List[dict], summary: dict) -> str:
         else:
             changed = "NO"
 
-        token_count = str(r.get("token_count", 0) or 0)
-
         toks = r.get("tokens_head", []) if r.get("ok") else (r.get("prev_tokens_head", []) or [])
         preview = " / ".join([shorten(str(t), 45) for t in toks[:3]]) if toks else ""
-        lines.append(f"| {name} | {ok} | {changed} | {token_count} | {escape_md(preview)} |")
+        lines.append(f"| {name} | {changed} | {escape_md(preview)} |")
 
     lines.append("")
     lines.append("## 변경 상세(상단 토큰)")
@@ -1097,7 +1093,6 @@ def render_monitor_html(results: List[dict], summary: dict) -> str:
 
     rows: List[str] = []
     for r in results:
-        status = "OK" if r.get("ok") else "FAIL"
         ch = r.get("changed")
         if ch is True:
             changed = "YES"
@@ -1125,9 +1120,7 @@ def render_monitor_html(results: List[dict], summary: dict) -> str:
         rows.append(
             "<tr>"
             f"<td data-label='사이트'><a href='{escape_attr(r['url'])}' target='_blank' rel='noopener noreferrer'>{escape_html(r['name'])}</a></td>"
-            f"<td data-label='상태'>{escape_html(status)}</td>"
             f"<td data-label='변경'>{escape_html(changed)}</td>"
-            f"<td data-label='토큰수' style='text-align:right'>{int(r.get('token_count',0) or 0)}</td>"
             f"<td data-label='토큰 미리보기'>{preview_html}</td>"
             "</tr>"
         )
@@ -1146,7 +1139,7 @@ def render_monitor_html(results: List[dict], summary: dict) -> str:
         "<div class='box'>"
         "<div class='table-wrap monitor-table-wrap'>"
         "<table class='table monitor-table'>"
-        "<thead><tr><th>사이트</th><th>상태</th><th>변경</th><th style='text-align:right'>토큰수</th><th>토큰 미리보기</th></tr></thead>"
+        "<thead><tr><th>사이트</th><th>변경</th><th>토큰 미리보기</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody>"
         "</table>"
         "</div>"

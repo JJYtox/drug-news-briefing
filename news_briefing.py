@@ -840,9 +840,8 @@ def extractor_cayman_new_products_names(normalized_html: str) -> List[str]:
         seen.add(k)
         uniq.append(n)
 
-    # 순서 흔들림(정렬/리렌더)로 인한 불필요 변경을 줄이려면 정렬 추천
-    uniq = sorted(uniq, key=lambda s: s.lower())
-
+    # Cayman New Products는 페이지에 신규 항목이 먼저 노출되므로
+    # DOM 순서를 유지해 신규 목록 위주로 표시한다.
     return uniq[:200]
     
 def extractor_cayman_itemno(normalized_html: str) -> List[str]:

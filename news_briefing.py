@@ -1139,7 +1139,7 @@ def render_monitor_html(results: List[dict], summary: dict) -> str:
         "<div class='box'>"
         "<div class='table-wrap monitor-table-wrap'>"
         "<table class='table monitor-table'>"
-        "<thead><tr><th>사이트</th><th>변경</th><th>토큰 미리보기</th></tr></thead>"
+        "<thead><tr><th>사이트</th><th>변경</th><th>미리보기</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody>"
         "</table>"
         "</div>"

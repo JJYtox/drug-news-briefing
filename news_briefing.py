@@ -162,6 +162,10 @@ COMMON_FILLERS = [
     "가능성", "전면", "공식", "최근", "오늘", "어제", "내일",
 ]
 
+NEWS_EXCLUDE_PUBLISHERS = (
+    "인사이드비나",
+)
+
 
 def normalize_title_strong(raw_title: str) -> str:
     """범용 중복 제거용: 표현 차이를 크게 줄여 사건 단위 비교에 유리하게 만든다."""
@@ -186,6 +190,9 @@ def normalize_title_strong(raw_title: str) -> str:
 
     t = re.sub(r"\s+", " ", t).strip()
     return t
+def is_excluded_news_publisher(raw_title: str) -> bool:
+    publisher = extract_publisher(raw_title).strip().lower()
+    return any(name in publisher for name in NEWS_EXCLUDE_PUBLISHERS)
 
 
 GENERIC_STOPWORDS = set(
@@ -464,6 +471,9 @@ def collect_news_last_24h(session: requests.Session) -> Tuple[List[dict], dict]:
     for e in feed.entries:
         raw_title = getattr(e, "title", "").strip()
         link = getattr(e, "link", "").strip()
+
+        if is_excluded_news_publisher(raw_title):
+            continue
 
         published_dt_utc = None
         if getattr(e, "published_parsed", None):
@@ -1045,7 +1055,7 @@ def render_monitor_md(results: List[dict], summary: dict) -> str:
     lines.append("")
     lines.append("## 결과")
     lines.append("")
-    lines.append("| 사이트 | 변경 | 토큰 미리보기 |")
+    lines.append("| 사이트 | 변경 | 미리보기 |")
     lines.append("|---|---:|---|")
 
     for r in results:

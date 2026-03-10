@@ -1,0 +1,69 @@
+name: Daily Briefing Page
+run-name: "Daily Briefing • ${{ github.event_name }} • ${{ github.run_id }}"
+
+on:
+  schedule:
+    - cron: "50 23 * * *"  # UTC 23:50 = KST 08:50
+  workflow_dispatch:
+
+concurrency:
+  group: daily-briefing
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (main)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install deps
+        run: |
+          pip install feedparser pytz requests beautifulsoup4 playwright
+          python -m playwright install chromium --with-deps
+
+      - name: Generate page
+        env:
+          SITE_STATE_URL: https://raw.githubusercontent.com/JJYtox/drug-news-briefing/gh-pages/site_state.json
+        run: python news_briefing.py
+
+      - name: Debug event
+        run: echo "event=${GITHUB_EVENT_NAME}"
+
+      # docs/ 내용을 gh-pages 브랜치 루트로 배포
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./docs
+          force_orphan: true
+
+      - name: Create issue only when change/failure
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DATE_KST=$(TZ=Asia/Seoul date +'%Y-%m-%d')
+          UPDATED=$(python -c "import json;print(json.load(open('docs/monitor_summary.json','r',encoding='utf-8')).get('updated',0))")
+          FAILED=$(python -c "import json;print(json.load(open('docs/monitor_summary.json','r',encoding='utf-8')).get('failed',0))")
+
+          if [ "$UPDATED" -eq 0 ] && [ "$FAILED" -eq 0 ]; then
+            echo "No update and no failure -> skip issue."
+            exit 0
+          fi
+
+          TITLE="감시 사이트 업데이트 점검 (${DATE_KST})"
+          EXIST=$(gh issue list --search "$TITLE in:title" --json number --jq '.[0].number')
+          if [ -n "$EXIST" ]; then exit 0; fi
+          gh issue create --title "$TITLE" --body-file docs/site_monitor.md

@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 import os
@@ -12,57 +12,18 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional, Tuple, Set
 
-try:
-    from zoneinfo import ZoneInfo
-except Exception:  # pragma: no cover
-    ZoneInfo = None
-try:
-    import feedparser
-except ModuleNotFoundError:
-    raise SystemExit(
-        "Missing dependency: feedparser\n"
-        "Install with: python -m pip install feedparser\n"
-        "Or install all deps: python -m pip install -r requirements.txt"
-    )
-
-try:
-    import requests
-except ModuleNotFoundError:
-    raise SystemExit(
-        "Missing dependency: requests\n"
-        "Install with: python -m pip install requests\n"
-        "Or install all deps: python -m pip install -r requirements.txt"
-    )
-
-try:
-    from bs4 import BeautifulSoup
-except ModuleNotFoundError:
-    raise SystemExit(
-        "Missing dependency: beautifulsoup4\n"
-        "Install with: python -m pip install beautifulsoup4\n"
-        "Or install all deps: python -m pip install -r requirements.txt"
-    )
+import pytz
+import feedparser
+import requests
+from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-import urllib3
 
 
 # =========================
 # Time / Globals
 # =========================
-if ZoneInfo is not None:
-    try:
-        KST = ZoneInfo("Asia/Seoul")
-    except Exception:
-        # Windows/Python 환경에서 tzdata 미설치 시 fallback
-        KST = timezone(timedelta(hours=9))
-else:
-    try:
-        import pytz  # type: ignore
-
-        KST = pytz.timezone("Asia/Seoul")
-    except Exception:
-        KST = timezone(timedelta(hours=9))
+KST = pytz.timezone("Asia/Seoul")
 
 DOCS_DIR = "docs"
 INDEX_HTML = os.path.join(DOCS_DIR, "index.html")
@@ -76,13 +37,6 @@ SITE_STATE_URL = os.getenv("SITE_STATE_URL", "").strip()  # raw gh-pages json (o
 # =========================
 # HTTP Session (retry/backoff)
 # =========================
-def env_bool(name: str, default: bool = True) -> bool:
-    v = os.getenv(name, "").strip().lower()
-    if not v:
-        return default
-    return v in {"1", "true", "yes", "y", "on"}
-
-
 def build_session() -> requests.Session:
     s = requests.Session()
     retry = Retry(
@@ -105,16 +59,6 @@ def build_session() -> requests.Session:
             "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
         }
     )
-
-    # TLS options for local environments with SSL interception/proxy issues.
-    ca_bundle = os.getenv("REQUESTS_CA_BUNDLE", "").strip()
-    if ca_bundle:
-        s.verify = ca_bundle
-    else:
-        s.verify = env_bool("SSL_VERIFY", True)
-    if s.verify is False:
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
     return s
 
 
@@ -130,7 +74,7 @@ def sha256_hex(text: str) -> str:
 
 
 def safe_get_json(session: requests.Session, url: str, timeout: int = 20) -> Optional[dict]:
-    """Fetch JSON with the shared retry-enabled session."""
+    """session 기반 (retry/backoff 적용)"""
     if not url:
         return None
     try:
@@ -144,12 +88,12 @@ def safe_get_json(session: requests.Session, url: str, timeout: int = 20) -> Opt
 
 def load_prev_state(session: requests.Session) -> dict:
     """
-    Priority:
-      1) SITE_STATE_URL (gh-pages raw json)
-      2) local docs/site_state.json
-      3) empty dict
+    우선순위:
+      1) SITE_STATE_URL(gh-pages raw)에서 전날 상태 로드 시도
+      2) 로컬 docs/site_state.json
+      3) 없으면 빈 dict
 
-    If structure is {"meta":..., "sites":{...}}, return sites.
+    저장 구조가 {"meta":..., "sites":{...}} 이므로 항상 sites를 반환하도록 보정.
     """
     prev = safe_get_json(session, SITE_STATE_URL) if SITE_STATE_URL else None
     if isinstance(prev, dict):
@@ -172,17 +116,19 @@ def shorten(s: str, max_len: int = 70) -> str:
     s = (s or "").strip()
     if len(s) <= max_len:
         return s
-    return s[: max_len - 3] + "..."
+    return s[: max_len - 1] + "…"
 
 def clean_token(s: str) -> str:
-    """Normalize HTML fragments into stable token text."""
+    """
+    토큰에 섞이는 HTML 엔티티/태그/공백을 정리해서 사람이 읽기 쉽게 만든다.
+    """
     s = html_lib.unescape(s or "")
-    s = re.sub(r"<[^>]+>", " ", s)
+    s = re.sub(r"<[^>]+>", " ", s)      # <br> 같은 태그 제거
     s = re.sub(r"\s+", " ", s).strip()
     return s
     
 # =========================
-# News Briefing
+# News Briefing (A안: 의존성 없음, 범용 중복 제거 강화)
 # =========================
 def build_google_news_rss_url(query: str, hl: str = "ko", gl: str = "KR", ceid: str = "KR:ko") -> str:
     from urllib.parse import quote_plus
@@ -192,10 +138,10 @@ def build_google_news_rss_url(query: str, hl: str = "ko", gl: str = "KR", ceid: 
 
 def normalize_title(title: str) -> str:
     t = title.strip()
-    # Remove trailing publisher part in Google News title: "... - Publisher"
+    # 흔한 꼬리표 정리: " - 언론사"
     t = re.sub(r"\s+-\s+[^-]{2,40}$", "", t).strip()
-    # Normalize common quote/bracket symbols
-    t = re.sub(r"[\[\]\(\)\"'“”‘’]", " ", t)
+    # 괄호류 단순 정리
+    t = re.sub(r"[\[\]【】()（）]", " ", t)
     t = re.sub(r"\s+", " ", t).strip()
     return t
 
@@ -206,30 +152,33 @@ def extract_publisher(raw_title: str) -> str:
 
 
 NEWS_STYLE_NOISE = [
-    "단독", "속보", "충격", "논란", "파문", "비판", "급락", "급등",
-    "초비상", "위기", "재앙", "대참사", "경악", "소름", "아찔",
+    "단독", "속보", "전격", "충격", "파문", "논란", "비판",
+    "초비상", "위기", "날벼락", "대참사", "경악", "난리",
+    "전망", "무산", "급증", "급락", "폭등", "폭락",
+    "결국", "드디어",
 ]
 COMMON_FILLERS = [
-    "이다", "했다", "관련", "이유", "사실", "추정", "가능성",
-    "화면", "공식", "최근", "오늘", "어제", "내일",
+    "했다", "한다", "관련", "이유", "사실상", "추정",
+    "가능성", "전면", "공식", "최근", "오늘", "어제", "내일",
 ]
 
 
 def normalize_title_strong(raw_title: str) -> str:
-    """Normalize title text for robust de-duplication and clustering."""
+    """범용 중복 제거용: 표현 차이를 크게 줄여 사건 단위 비교에 유리하게 만든다."""
     t = normalize_title(raw_title)
 
-    # Normalize punctuation and separators
-    t = re.sub(r"[\"'“”‘’]", " ", t)
-    t = re.sub(r"[|/:;]", " ", t)
+    # 인용/강조 기호 제거
+    t = re.sub(r"[“”‘’'\"…·•※◆■★☆▶️]", " ", t)
+    t = re.sub(r"[|/]", " ", t)
+    t = re.sub(r"[:;]", " ", t)
 
-    # Normalize ordinal spacing
-    t = re.sub(r"\b2\s*차\b", "2차", t)
-    t = re.sub(r"\b3\s*차\b", "3차", t)
-    t = re.sub(r"\b4\s*차\b", "4차", t)
-    t = re.sub(r"\b(\d+)\s*차\b", r"\1차", t)
+    # 서수/표현 통일
+    t = re.sub(r"\b두\s*번째\b", "2번째", t)
+    t = re.sub(r"\b세\s*번째\b", "3번째", t)
+    t = re.sub(r"\b네\s*번째\b", "4번째", t)
+    t = re.sub(r"\b(\d+)\s*번째\b", r"\1번째", t)
 
-    # Remove clickbait / filler terms
+    # 뉴스 문체 노이즈 제거
     for p in NEWS_STYLE_NOISE:
         t = re.sub(rf"\b{re.escape(p)}\b", " ", t, flags=re.I)
     for p in COMMON_FILLERS:
@@ -241,17 +190,20 @@ def normalize_title_strong(raw_title: str) -> str:
 
 GENERIC_STOPWORDS = set(
     [
-        "및", "다시", "이후", "관련", "이유", "사실", "추정", "가능성",
-        "오늘", "어제", "내일", "이번", "지역", "최근", "현재", "즉시",
-        "논란", "파문", "충격", "속보", "단독", "아찔", "무산",
-        "공식", "화면", "급등", "급락", "레전드",
+        "또", "다시", "이후", "관련", "이유", "사실", "사실상", "추정", "가능성",
+        "오늘", "어제", "내일", "이번", "지난", "최근", "현재", "당시",
+        "논란", "파문", "충격", "전격", "속보", "단독", "전망", "무산",
+        "공식", "전면", "급증", "급락", "결국", "드디어",
     ]
 )
-KOREAN_PARTICLES = ("은", "는", "이", "가", "을", "를", "의", "에서", "으로", "와", "과", "도", "만")
+KOREAN_PARTICLES = ("은", "는", "이", "가", "을", "를", "에", "에서", "으로", "와", "과", "도", "만")
 
 
 def strip_korean_particle(token: str) -> str:
-    """Trim common Korean particles from long Korean tokens."""
+    """
+    형태소 분석 없이 '사건 비교' 목적의 아주 약한 보정:
+    - 3글자 이상 한글 토큰이면 끝 조사 일부 제거
+    """
     if not token:
         return token
     if re.fullmatch(r"[가-힣]{3,}", token):
@@ -276,7 +228,7 @@ def core_tokens(raw_title: str) -> List[str]:
             continue
         out.append(t)
 
-    # Remove duplicates while preserving order
+    # 중복 제거(순서 유지)
     seen: Set[str] = set()
     uniq: List[str] = []
     for t in out:
@@ -288,7 +240,9 @@ def core_tokens(raw_title: str) -> List[str]:
 
 
 def anchor_tokens(tokens: List[str]) -> Set[str]:
-    """High-signal tokens (numbers, mixed tokens, proper-like words)."""
+    """
+    anchor = 사건을 구분하는 데 도움이 되는 토큰(고유명사/숫자/긴 단어 등)
+    """
     anchors: Set[str] = set()
     for t in tokens:
         if t in GENERIC_STOPWORDS:
@@ -336,11 +290,11 @@ def make_features(item: dict) -> dict:
 
 def similarity_score(fa: dict, fb: dict) -> float:
     """
-    0~1 event similarity score
+    0~1 범용 사건 유사도:
     - core jaccard
-    - anchor jaccard (high weight)
-    - sequence ratio of token-sorted string
-    - number overlap bonus
+    - anchor jaccard(더 중요)
+    - token-sorted 문자열의 SequenceMatcher 비율(어순 변화에 강함)
+    - 숫자 교집합 보너스
     """
     j_core = jaccard(fa["core_set"], fb["core_set"])
     j_anchor = jaccard(fa["anchors"], fb["anchors"])
@@ -357,12 +311,12 @@ def similarity_score(fa: dict, fb: dict) -> float:
 
 def cluster_news_events(items: List[dict]) -> List[dict]:
     """
-    Cluster news into event groups.
-    - exact hash dedup first
-    - anchor-based candidate search + similarity score
-    - second merge pass to merge split clusters
+    강화된 범용 사건 클러스터링:
+    - exact(강정규화 해시) 1차 제거
+    - anchor 기반 후보군 탐색 + 결합 유사도 점수
+    - 2차(클러스터 대표끼리) merge pass로 split cluster 추가 병합
     """
-    # ---- 1) exact dedup by normalized-title hash ----
+    # ---- 1) exact dedup(강정규화 해시) ----
     by_hash: Dict[str, dict] = {}
     for it in items:
         f = make_features(it)
@@ -370,7 +324,7 @@ def cluster_news_events(items: List[dict]) -> List[dict]:
         if h not in by_hash:
             by_hash[h] = it
         else:
-            # keep newer item
+            # 대표 선정: 최신(업데이트 반영)
             if it.get("published_ts", 0) > by_hash[h].get("published_ts", 0):
                 by_hash[h] = it
 
@@ -385,8 +339,9 @@ def cluster_news_events(items: List[dict]) -> List[dict]:
         for t in toks:
             inv.setdefault(t, set()).add(cid)
 
-    THRESH_WITH_ANCHOR = 0.50
-    THRESH_NO_ANCHOR = 0.70
+    # ✅ 튜닝 포인트 (중복이 많으면 WITH_ANCHOR를 0.50~0.52 쪽으로 낮춰보는 게 효과 큼)
+    THRESH_WITH_ANCHOR = 0.50   # anchor/숫자 겹침 있을 때는 공격적으로
+    THRESH_NO_ANCHOR = 0.70     # anchor/숫자 겹침 없으면 매우 비슷할 때만 병합
 
     for it in dedup_stage1:
         fi = make_features(it)
@@ -398,7 +353,7 @@ def cluster_news_events(items: List[dict]) -> List[dict]:
             cand |= inv.get(n, set())
 
         if not cand:
-            # If no anchor hit, compare only recent clusters for speed.
+            # 후보가 없으면 최근 클러스터 일부만 비교(시간 지역성)
             cand = set(range(max(0, len(clusters) - 25), len(clusters)))
 
         best_cid = -1
@@ -448,7 +403,7 @@ def cluster_news_events(items: List[dict]) -> List[dict]:
         )
         add_to_inv(cid, set(fi["anchors"]) | set(fi["nums"]))
 
-    # ---- 3) merge pass ----
+    # ---- 3) merge pass(대표끼리 한 번 더 병합) ----
     merged: List[dict] = []
     for c in sorted(clusters, key=lambda x: x["rep"].get("published_ts", 0), reverse=True):
         placed = False
@@ -492,7 +447,7 @@ def collect_news_last_24h(session: requests.Session) -> Tuple[List[dict], dict]:
     now_kst = datetime.now(KST)
     since_kst = now_kst - timedelta(hours=24)
 
-    query = "(마약 OR 마약류 OR 마약성 OR 향정) AND (적발 OR 검거 OR 단속 OR 밀수 OR 유통 OR 압수)"
+    query = "(마약 OR 마약류 OR 향정 OR 약물) AND (적발 OR 검거 OR 압수 OR 밀수 OR 수사 OR 단속 OR 운전)"
     url = build_google_news_rss_url(query)
 
     feed_text = ""
@@ -549,11 +504,12 @@ def collect_news_last_24h(session: requests.Session) -> Tuple[List[dict], dict]:
 
 def render_news_html(event_clusters: List[dict], stats: dict) -> str:
     """
-    - 이벤트 단위로 대표 기사만 노출
-    - 추가 기사 목록(details)은 표시하지 않음
+    - 사건 단위로 대표 기사만 노출
+    - 추가기사 목록(details)은 아예 노출하지 않음
+    - 필요하면 +N건 배지는 유지(원치 않으면 badge_extra 줄을 빈 문자열로 바꾸면 됨)
     """
     if not event_clusters:
-        return "<p>최근 24시간 기사 수집 결과가 없습니다.</p>"
+        return "<p>최근 24시간 기준 수집된 뉴스가 없습니다.</p>"
 
     collected = int(stats.get("collected", 0) or 0)
     events = int(stats.get("events", 0) or 0)
@@ -566,12 +522,13 @@ def render_news_html(event_clusters: List[dict], stats: dict) -> str:
         pub = f"<span class='meta'>[{escape_html(rep.get('publisher',''))}]</span> " if rep.get("publisher") else ""
         ts = f"<span class='meta'>{escape_html(rep.get('published_kst',''))}</span>"
 
+        # ✅ +N건 표시만 유지 (완전히 숨기려면 아래 줄을 badge_extra = "" 로 변경)
         badge_extra = f" <span class='badge small'>+{extra_n}건</span>" if extra_n else ""
 
         head = (
             f"<div class='event'>"
             f"<div class='event-head'>"
-            f"<span class='event-no'>[이벤트 {idx}]</span> "
+            f"<span class='event-no'>[사건 {idx}]</span> "
             f"{pub}<a href='{escape_attr(rep.get('link',''))}' target='_blank' rel='noopener noreferrer'>"
             f"{escape_html(rep.get('title',''))}</a> {ts}"
             f"{badge_extra}"
@@ -583,7 +540,7 @@ def render_news_html(event_clusters: List[dict], stats: dict) -> str:
     return (
         f"<div class='kpi'>"
         f"<span class='badge'>기사 {collected}건</span>"
-        f"<span class='badge'>이벤트 {events}개</span>"
+        f"<span class='badge'>사건 {events}개</span>"
         f"</div>"
         f"{''.join(blocks)}"
     )
@@ -600,20 +557,20 @@ class MonitorSpec:
     extractor: Callable[[str], List[str]]
     fallback_extractor: Optional[Callable[[str], List[str]]] = None
     soften_dates: bool = True
-    use_playwright: bool = False  # Fallback to Playwright when requests extraction fails.
-    keep_jsonld: bool = False     # Keep JSON-LD scripts during normalization.
+    use_playwright: bool = False  # requests로 안 되면 playwright 렌더링 fallback
+    keep_jsonld: bool = False     # ✅ CSL 같은 페이지에서 JSON-LD(script) 유지 옵션
 
 
 def normalize_html(html: str, soften_dates: bool = True, keep_jsonld: bool = False) -> str:
     soup = BeautifulSoup(html, "html.parser")
 
-    # Remove style/noscript
+    # style/noscript 제거
     for tag in soup(["style", "noscript"]):
         tag.decompose()
 
-    # Script handling:
-    # - default: remove all
-    # - keep_jsonld=True: keep application/ld+json only
+    # script 처리:
+    # - 기본: 전부 제거
+    # - keep_jsonld=True면 application/ld+json만 남기고 나머지 제거
     for tag in soup.find_all("script"):
         if keep_jsonld:
             typ = (tag.get("type") or "").lower().strip()
@@ -658,10 +615,10 @@ def extract_by_regex_list(normalized_html: str, patterns: List[str], max_tokens:
 
 def extractor_swgdrug_additional_resources_3_5(normalized_html: str) -> List[str]:
     """
-    Parse SWGDRUG "Additional Resources":
+    SWGDRUG 홈 'Additional Resources'의
     3) SWGDRUG Recommendations Version ...
     5) Searchable Mass Spectral Library Version ...
-    Return concise token summaries.
+    두 줄만 토큰으로 반환 (사람이 보기 쉬운 형태)
     """
     soup = BeautifulSoup(normalized_html, "html.parser")
     text = soup.get_text(" ", strip=True)
@@ -691,7 +648,7 @@ def extractor_swgdrug_additional_resources_3_5(normalized_html: str) -> List[str
         date_raw = m5.group(2).strip()
         tokens.append(f"SWGDRUG MS Library v{ver} (dated {date_raw})")
 
-    # fallback: version-only extraction
+    # fallback: 문장 매칭 실패 시 버전만이라도
     if not tokens:
         m3b = re.search(r"SWGDRUG Recommendations\s*Version\s*(\d+(?:\.\d+)*)", text, flags=re.I)
         if m3b:
@@ -704,9 +661,10 @@ def extractor_swgdrug_additional_resources_3_5(normalized_html: str) -> List[str
 
 def _csl_date_from_8digits_dmy(v8: str) -> Optional[str]:
     """
-    Parse 8-digit CSL versions as DMY(DDMMYYYY) into YYYY-MM-DD.
-    - If DMY is invalid, try YYYYMMDD.
-    - MMDDYYYY is intentionally not parsed.
+    CSL 버전이 8자리 숫자일 때 DMY(DDMMYYYY)로 해석해 YYYY-MM-DD로 반환.
+    - DMY가 유효하지 않으면(예: 05162013 -> 월=16) None
+    - (안전망) YYYYMMDD 형태로만 유효하면 그걸로 반환
+    - MMDDYYYY는 의도적으로 해석하지 않음(과거 파일명이 섞일 때 오탐 방지)
     """
     digits = re.sub(r"\D", "", v8 or "")
     if len(digits) != 8:
@@ -722,7 +680,7 @@ def _csl_date_from_8digits_dmy(v8: str) -> Optional[str]:
     except ValueError:
         pass
 
-    # 2) fallback YYYYMMDD
+    # 2) (안전망) YYYYMMDD만 유효하면 그쪽으로
     y2 = int(digits[0:4])
     m2 = int(digits[4:6])
     d2 = int(digits[6:8])
@@ -735,9 +693,8 @@ def _csl_date_from_8digits_dmy(v8: str) -> Optional[str]:
 
 def _format_csl_version(v: str) -> str:
     """
-    Format CSL version text.
-    - If 8 digits and valid DMY, return YYYY-MM-DD.
-    - Otherwise return original text.
+    8자리면 DMY(DDMMYYYY)로만 해석해 YYYY-MM-DD 반환.
+    (MMDDYYYY는 의도적으로 해석하지 않음: 과거 파일명 오탐 방지)
     """
     v = (v or "").strip()
     digits = re.sub(r"\D", "", v)
@@ -749,14 +706,15 @@ def _format_csl_version(v: str) -> str:
         try:
             return datetime(y, m, d).strftime("%Y-%m-%d")
         except ValueError:
-            # Keep original if DMY parse fails.
+            # DMY로 성립 안 하면 원문 유지
             return v
 
     return v
 
 def _extract_section_html_by_heading(soup: BeautifulSoup, heading_contains: str, max_chars: int = 15000) -> str:
     """
-    Return HTML content after a heading containing text, until next heading.
+    heading_contains(예: 'Version info')를 포함하는 heading 이후,
+    다음 heading 전까지의 'HTML 문자열'을 반환 (href 등 속성 포함).
     """
     heading = None
     target = heading_contains.lower()
@@ -789,27 +747,28 @@ def _extract_section_html_by_heading(soup: BeautifulSoup, heading_contains: str,
 def extractor_cayman_csl_library_version(normalized_html: str) -> List[str]:
     """
     Cayman CSL:
-    - Use the first CaymanSpectralLibrary_v... in "Version info" as latest.
-    - Parse date-like versions as DMY(DDMMYYYY) -> YYYY-MM-DD.
+    - Version info 섹션은 최신이 가장 위 → 그 섹션에서 첫 번째 CaymanSpectralLibrary_v...만 사용
+    - 날짜는 DMY(DDMMYYYY)로 YYYY-MM-DD 표출
     """
     soup = BeautifulSoup(normalized_html, "html.parser")
 
-    # 1) Prefer "Version info" section HTML first
+    # 1) Version info 섹션 HTML(링크 href 포함) 우선
     sec_html = _extract_section_html_by_heading(soup, "Version info")
     if sec_html:
         blob = html_lib.unescape(sec_html)
     else:
-        # If section lookup fails, fall back to full page content.
+        # heading 탐지 실패 시 전체 HTML로 차선
         blob = html_lib.unescape(normalized_html)
 
-    # 2) First CaymanSpectralLibrary_v... is treated as latest.
+    # 2) 섹션 내 '첫 번째' CaymanSpectralLibrary_v... 가 최신(페이지 설계 가정)
     m = re.search(r"CaymanSpectralLibrary[_-]v?(\d{8}|\d+(?:\.\d+)+)", blob, flags=re.I)
     if m:
         raw_v = m.group(1).strip()
         fmt = _format_csl_version(raw_v)
+        # 원문도 남기고 싶으면 (v{raw_v}) 유지, 싫으면 제거
         return [f"CSL Library version: {fmt} (v{raw_v})"]
 
-    # 3) Final fallback: dateModified
+    # 3) 최후 fallback: dateModified만
     m2 = re.search(r'"dateModified"\s*:\s*"([^"]+)"', html_lib.unescape(normalized_html), flags=re.I)
     if m2:
         return [f"CSL dateModified: {m2.group(1).strip()}"]
@@ -832,8 +791,8 @@ def extractor_cayman_csl_fallback(normalized_html: str) -> List[str]:
 def extractor_cayman_new_products_names(normalized_html: str) -> List[str]:
     """
     Cayman New Products에서 물질명/제품명을 추출.
-    - /product/<id>/... 링크의 텍스트(없으면 aria-label/title)를 우선 사용
-    - 텍스트가 비면 slug로 최소 이름 생성(item no보다 식별력 높음)
+    - /product/<id>/... 링크의 텍스트(또는 aria-label/title)를 최우선 사용
+    - 텍스트가 비면 slug로 최소 이름 생성(그래도 itemno보다는 낫게)
     """
     soup = BeautifulSoup(normalized_html, "html.parser")
 
@@ -842,19 +801,17 @@ def extractor_cayman_new_products_names(normalized_html: str) -> List[str]:
         "forensics", "products", "new products", "results", "item no",
     }
 
-    entries: List[Tuple[int, str]] = []
-    seen_pairs: Set[Tuple[int, str]] = set()
-
+    names: List[str] = []
     for a in soup.find_all("a", href=True):
         href = a.get("href") or ""
-        m_id = re.search(r"/product/(\d{4,8})/", href)
-        if not m_id:
+        if not re.search(r"/product/\d{4,8}/", href):
             continue
 
         txt = a.get_text(" ", strip=True) or a.get("aria-label") or a.get("title") or ""
         txt = clean_token(txt)
 
         if not txt:
+            # 텍스트가 없으면 slug로 최소 이름 생성
             m = re.search(r"/product/\d{4,8}/([^?#/]+)", href)
             if m:
                 txt = clean_token(m.group(1).replace("-", " "))
@@ -864,31 +821,30 @@ def extractor_cayman_new_products_names(normalized_html: str) -> List[str]:
             continue
         if any(w in low for w in reject_words):
             continue
+        # 숫자만이면 제외
         if re.fullmatch(r"\d+", txt):
             continue
+        # 알파벳이 전혀 없으면(거의 UI 텍스트 가능성) 제외
         if not re.search(r"[A-Za-z]", txt):
             continue
 
-        product_id = int(m_id.group(1))
-        pair = (product_id, txt)
-        if pair in seen_pairs:
-            continue
-        seen_pairs.add(pair)
-        entries.append(pair)
+        names.append(txt)
 
-    # Product id가 보통 최신 등록 순서를 반영하므로 내림차순 정렬 후 상단 토큰 생성.
-    entries.sort(key=lambda x: x[0], reverse=True)
-
+    # 중복 제거(대소문자 무시)
     uniq: List[str] = []
     seen: Set[str] = set()
-    for _, n in entries:
+    for n in names:
         k = n.lower()
         if k in seen:
             continue
         seen.add(k)
         uniq.append(n)
 
-    return uniq[:200]    
+    # 순서 흔들림(정렬/리렌더)로 인한 불필요 변경을 줄이려면 정렬 추천
+    uniq = sorted(uniq, key=lambda s: s.lower())
+
+    return uniq[:200]
+    
 def extractor_cayman_itemno(normalized_html: str) -> List[str]:
     patterns = [r"\bItem\s*No\.?\s*[:#]?\s*(\d{4,8})\b"]
     return extract_by_regex_list(normalized_html, patterns, max_tokens=120)
@@ -906,7 +862,7 @@ def try_render_html_playwright(url: str) -> Tuple[str, str]:
             page = context.new_page()
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
 
-            # Try networkidle when available; continue even if it times out.
+            # networkidle은 "되면 좋고, 안 되면 넘어가자" 수준으로만
             try:
                 page.wait_for_load_state("networkidle", timeout=15000)
             except Exception:
@@ -923,25 +879,19 @@ def monitor_one(session: requests.Session, spec: MonitorSpec, prev_state: dict, 
     now_kst = datetime.now(KST).isoformat(timespec="minutes")
 
     prev_entry = (prev_state or {}).get(spec.key, {}) if isinstance(prev_state, dict) else {}
-    def normalize_hash_text(h: str) -> str:
-        v = str(h or "").strip().lower()
-        if v.startswith("sha256:"):
-            v = v.split(":", 1)[1].strip()
-        return v
-
-    prev_hash = normalize_hash_text(prev_entry.get("hash", ""))
+    prev_hash = str(prev_entry.get("hash", "") or "")
     prev_tokens_head = list(prev_entry.get("tokens_head", []) or [])[:12]
 
     def compute_changed(cur_hash: str) -> Optional[bool]:
         if not prev_hash:
             return None
-        return normalize_hash_text(cur_hash) != prev_hash
+        return cur_hash != prev_hash
 
     used_playwright = False
     html = ""
     req_err = ""
 
-    # 1) Try requests first
+    # 1) requests 시도
     try:
         r = session.get(spec.url, timeout=timeout)
         if r.status_code == 200:
@@ -966,7 +916,7 @@ def monitor_one(session: requests.Session, spec: MonitorSpec, prev_state: dict, 
     if html:
         tokens = extract_tokens_from_html(html)
 
-    # 2) Playwright fallback when needed
+    # 2) 필요 시 playwright fallback
     pw_err = ""
     if (not tokens) and spec.use_playwright:
         rendered, pw_err = try_render_html_playwright(spec.url)
@@ -990,7 +940,7 @@ def monitor_one(session: requests.Session, spec: MonitorSpec, prev_state: dict, 
             "error": err,
             "token_count": 0,
             "tokens_head": [],
-            "prev_tokens_head": prev_tokens_head,  # show previous preview even on FAIL
+            "prev_tokens_head": prev_tokens_head,  # ✅ FAIL이어도 전날 토큰 미리보기 제공
             "hash": "",
             "prev_hash": prev_hash,
             "fetched_kst": now_kst,
@@ -1022,7 +972,7 @@ def run_monitoring(session: requests.Session, prev_state: dict) -> Tuple[List[di
     specs = [
         MonitorSpec(
             key="swgdrug_home",
-            name="SWGDRUG Home",
+            name="SWGDRUG 홈",
             url="https://swgdrug.org/",
             extractor=extractor_swgdrug_additional_resources_3_5,
             soften_dates=False,
@@ -1043,8 +993,8 @@ def run_monitoring(session: requests.Session, prev_state: dict) -> Tuple[List[di
             key="cayman_new_products",
             name="Cayman New Products",
             url="https://www.caymanchem.com/forensics/search/productSearch",
-            extractor=extractor_cayman_new_products_names,
-            fallback_extractor=extractor_cayman_itemno,
+            extractor=extractor_cayman_new_products_names,   # ✅ 물질명
+            fallback_extractor=extractor_cayman_itemno,       # 최후 보험
             soften_dates=True,
             use_playwright=True,
         ),
@@ -1064,7 +1014,7 @@ def run_monitoring(session: requests.Session, prev_state: dict) -> Tuple[List[di
         "failed": failed,
     }
 
-    # Keep previous successful state when a site fails.
+    # ✅ FAIL이 나도 이전 성공 state를 유지(토큰 미리보기/비교 안정화)
     new_state: dict = dict(prev_state) if isinstance(prev_state, dict) else {}
 
     for r in results:
@@ -1088,7 +1038,7 @@ def run_monitoring(session: requests.Session, prev_state: dict) -> Tuple[List[di
 
 def render_monitor_md(results: List[dict], summary: dict) -> str:
     lines: List[str] = []
-    lines.append(f"# 감시 사이트 업데이트 요약 ({summary.get('date_kst','')})")
+    lines.append(f"# 감시 사이트 업데이트 점검 ({summary.get('date_kst','')})")
     lines.append("")
     lines.append(f"- 업데이트 감지: **{summary.get('updated',0)}**")
     lines.append(f"- 실패: **{summary.get('failed',0)}**")
@@ -1158,11 +1108,13 @@ def render_monitor_html(results: List[dict], summary: dict) -> str:
         else:
             changed = "NO"
 
+        toks = r.get("tokens_head", []) if r.get("ok") else (r.get("prev_tokens_head", []) or [])
         cur_toks = r.get("tokens_head", []) if r.get("ok") else (r.get("prev_tokens_head", []) or [])
         cur_preview = "<br>".join([escape_html(shorten(str(t), 55)) for t in cur_toks[:3]]) if cur_toks else ""
 
         preview_html = f"<code>{cur_preview}</code>"
 
+        # ✅ 변경(YES)인 경우: 이전 토큰도 같이 보여주기
         if r.get("ok") and (r.get("changed") is True):
             prev_toks = r.get("prev_tokens_head", []) or []
             prev_preview = "<br>".join([escape_html(shorten(str(t), 55)) for t in prev_toks[:3]]) if prev_toks else ""
@@ -1172,6 +1124,7 @@ def render_monitor_html(results: List[dict], summary: dict) -> str:
                     f"<div style='margin-top:6px'><span class='meta'>이전</span><br><code>{prev_preview}</code></div>"
                 )
 
+        # 그리고 rows.append에서 <td><code>...</code></td> 대신 preview_html을 그대로 넣기
         note = r.get("error", "") or ""
 
         rows.append(
@@ -1195,7 +1148,7 @@ def render_monitor_html(results: List[dict], summary: dict) -> str:
     return (
         f"{kpi}"
         f"<details{open_attr}>"
-        f"<summary>감시 사이트 결과 (업데이트 {updated} / 실패 {failed})</summary>"
+        f"<summary>감시 사이트 점검 결과 (업데이트 {updated} · 실패 {failed})</summary>"
         "<div class='box'>"
         "<table class='table'>"
         "<thead><tr><th>사이트</th><th>상태</th><th>변경</th><th style='text-align:right'>토큰수</th><th>토큰 미리보기</th><th>비고</th></tr></thead>"
@@ -1237,28 +1190,28 @@ def build_page_html(news_html: str, monitor_html: str, meta: dict) -> str:
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <meta name="color-scheme" content="light dark"/>
-  <title>마약 뉴스 브리핑 + 감시 요약</title>
+  <title>마약류 뉴스 브리핑 + 감시 점검</title>
   <link rel="stylesheet" href="./style.css">
 </head>
 <body>
   <div class="container">
     <div class="header">
       <div>
-        <h1>마약 뉴스 브리핑 + 감시 요약</h1>
+        <h1>마약류 뉴스 브리핑 + 감시 점검</h1>
         <div class="subline">생성 시각(KST): {escape_html(generated_kst)}</div>
       </div>
     </div>
 
     <div class="section">
       <div class="section-head">
-        <h2>뉴스 브리핑(최근 24시간)</h2>
+        <h2>뉴스 브리핑 (최근 24시간)</h2>
       </div>
       {news_html}
     </div>
 
     <div class="section">
       <div class="section-head">
-        <h2>감시 사이트 업데이트 요약</h2>
+        <h2>감시 사이트 업데이트 점검</h2>
       </div>
       {monitor_html}
     </div>
@@ -1279,14 +1232,14 @@ def main() -> None:
     clusters, news_stats = collect_news_last_24h(session)
     news_html = render_news_html(clusters, news_stats)
 
-    # 2) 감시 결과 수집(이전 state 로드 후 비교)
+    # 2) 감시(전날 state 로드 → 비교)
     prev_state = load_prev_state(session)
     results, new_state, meta = run_monitoring(session, prev_state)
 
     summary = meta.get("summary", {})
     monitor_html = render_monitor_html(results, summary)
 
-    # 3) 출력물 저장
+    # 3) 산출물 저장
     write_json(STATE_JSON, {"meta": meta, "sites": new_state})
 
     md = render_monitor_md(results, summary)
@@ -1308,5 +1261,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

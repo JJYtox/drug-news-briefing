@@ -183,7 +183,8 @@ h1 {
   background: rgba(122,162,255,0.06);
 }
 
-.code {
+.code,
+.monitor-preview {
   font-family: var(--mono);
   font-size: 12px;
   color: var(--text);
@@ -199,7 +200,59 @@ h1 {
 }
 
 @media (prefers-color-scheme: light) {
-  .code { background: rgba(16,24,40,0.04); }
+  .code,
+  .monitor-preview { background: rgba(16,24,40,0.04); }
+}
+
+.monitor-table td:last-child {
+  min-width: 320px;
+}
+
+@media (max-width: 720px) {
+  .monitor-table {
+    min-width: 0;
+  }
+
+  .monitor-table thead {
+    display: none;
+  }
+
+  .monitor-table,
+  .monitor-table tbody,
+  .monitor-table tr,
+  .monitor-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .monitor-table tr {
+    padding: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .monitor-table td {
+    padding: 6px 0;
+    border-bottom: 0;
+    text-align: left !important;
+  }
+
+  .monitor-table td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 4px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .monitor-preview {
+    display: block;
+    width: 100%;
+    max-width: none;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
 }
 
 /* 상태 강조용: (옵션) render_monitor_html에서 row class 넣어주면 효과 큼 */

@@ -799,6 +799,7 @@ def extractor_cayman_new_products_names(normalized_html: str) -> List[str]:
     reject_words = {
         "add to cart", "learn more", "view", "search", "filter", "sort",
         "forensics", "products", "new products", "results", "item no",
+        "go to product page",
     }
 
     names: List[str] = []

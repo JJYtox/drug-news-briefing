@@ -594,6 +594,23 @@ def summarize_token_delta(prev_tokens: List[str], cur_tokens: List[str], max_ite
     return added[:max_items], removed[:max_items]
 
 
+def build_changed_preview_text(added: List[str], removed: List[str], max_names: int = 3, max_len: int = 45) -> str:
+    parts: List[str] = []
+    if added:
+        names = " / ".join([shorten(str(t), max_len) for t in added[:max_names]])
+        parts.append(f"Added {len(added)}" + (f": {names}" if names else ""))
+    return " | ".join(parts)
+
+
+def build_changed_preview_html(added: List[str], removed: List[str], max_names: int = 3, max_len: int = 55) -> str:
+    lines: List[str] = []
+    if added:
+        names = "<br>".join([escape_html(shorten(str(t), max_len)) for t in added[:max_names]])
+        header = f"Added {len(added)}"
+        lines.append(header if not names else f"{header}<br>{names}")
+    return "<br><br>".join(lines)
+
+
 def normalize_html(html: str, soften_dates: bool = True, keep_jsonld: bool = False) -> str:
     soup = BeautifulSoup(html, "html.parser")
 
@@ -983,10 +1000,11 @@ def monitor_one(session: requests.Session, spec: MonitorSpec, prev_state: dict, 
             "used_playwright": used_playwright,
         }
 
-    tokens = canonicalize_tokens(tokens, sort_tokens=(spec.key == "cayman_new_products"))
-    fp_text = "\n".join(tokens)
+    display_tokens = canonicalize_tokens(tokens, sort_tokens=False)
+    hash_tokens = canonicalize_tokens(tokens, sort_tokens=(spec.key == "cayman_new_products"))
+    fp_text = "\n".join(hash_tokens)
     cur_hash = sha256_hex(fp_text)
-    added_tokens, removed_tokens = summarize_token_delta(prev_tokens_all, tokens)
+    added_tokens, removed_tokens = summarize_token_delta(prev_tokens_all, display_tokens)
 
     note = "playwright fallback used" if used_playwright else ""
     return {
@@ -996,10 +1014,10 @@ def monitor_one(session: requests.Session, spec: MonitorSpec, prev_state: dict, 
         "ok": True,
         "changed": compute_changed(cur_hash),
         "error": note,
-        "token_count": len(tokens),
-        "tokens_head": tokens[:12],
+        "token_count": len(display_tokens),
+        "tokens_head": display_tokens[:12],
         "prev_tokens_head": prev_tokens_head,
-        "tokens_all": tokens,
+        "tokens_all": display_tokens,
         "prev_tokens_all": prev_tokens_all,
         "added_tokens": added_tokens,
         "removed_tokens": removed_tokens,
@@ -1104,14 +1122,8 @@ def render_monitor_md(results: List[dict], summary: dict) -> str:
         if r.get("ok") and (r.get("changed") is True):
             added = r.get("added_tokens", []) or []
             removed = r.get("removed_tokens", []) or []
-            preview_parts: List[str] = []
-            if added:
-                preview_parts.extend([f"+ {shorten(str(t), 45)}" for t in added[:3]])
-            if removed:
-                preview_parts.extend([f"- {shorten(str(t), 45)}" for t in removed[:3]])
-            if preview_parts:
-                preview = " / ".join(preview_parts)
-            else:
+            preview = build_changed_preview_text(added, removed, max_names=3, max_len=45)
+            if not preview:
                 toks = r.get("tokens_head", []) if r.get("ok") else (r.get("prev_tokens_head", []) or [])
                 preview = " / ".join([shorten(str(t), 45) for t in toks[:3]]) if toks else ""
         else:
@@ -1164,16 +1176,12 @@ def render_monitor_html(results: List[dict], summary: dict) -> str:
         preview_html = f"<code class='monitor-preview'>{cur_preview}</code>"
         added = r.get("added_tokens", []) or []
         removed = r.get("removed_tokens", []) or []
-        delta_lines: List[str] = []
-        if added:
-            delta_lines.extend([f"+ {escape_html(shorten(str(t), 55))}" for t in added[:3]])
-        if removed:
-            delta_lines.extend([f"- {escape_html(shorten(str(t), 55))}" for t in removed[:3]])
-        if delta_lines:
-            preview_html = f"<code class='monitor-preview'>{'<br>'.join(delta_lines)}</code>"
+        delta_preview = build_changed_preview_html(added, removed, max_names=3, max_len=55)
+        if delta_preview:
+            preview_html = f"<code class='monitor-preview'>{delta_preview}</code>"
 
         # ✅ 변경(YES)인 경우: 이전 토큰도 같이 보여주기
-        if r.get("ok") and (r.get("changed") is True) and (not delta_lines):
+        if r.get("ok") and (r.get("changed") is True) and (not delta_preview):
             prev_toks = r.get("prev_tokens_head", []) or []
             prev_preview = "<br>".join([escape_html(shorten(str(t), 55)) for t in prev_toks[:3]]) if prev_toks else ""
             if prev_preview:

@@ -1,0 +1,88 @@
+{
+  "meta": {
+    "generated_kst": "2026-03-13T10:37+09:00",
+    "summary": {
+      "date_kst": "2026-03-13",
+      "updated": 0,
+      "failed": 0
+    }
+  },
+  "sites": {
+    "swgdrug_home": {
+      "hash": "9b9798413e05e28167c93cc049ff52b9e310cc53a585b107386202a17e0715a8",
+      "token_count": 2,
+      "tokens_head": [
+        "SWGDRUG Recommendations v8.2 (approved June 27, 2024)",
+        "SWGDRUG MS Library v3.14 (dated January 22, 2025)"
+      ],
+      "tokens_all": [
+        "SWGDRUG Recommendations v8.2 (approved June 27, 2024)",
+        "SWGDRUG MS Library v3.14 (dated January 22, 2025)"
+      ],
+      "fetched_kst": "2026-03-13T10:37+09:00",
+      "url": "https://swgdrug.org/",
+      "name": "SWGDRUG 홈"
+    },
+    "cayman_csl": {
+      "hash": "28239e885411bbd2aa716db2494a5d9cfe4cf388c3d1d66386e9151ae60998e8",
+      "token_count": 1,
+      "tokens_head": [
+        "CSL Library version: 2025-12-10 (v10122025)"
+      ],
+      "tokens_all": [
+        "CSL Library version: 2025-12-10 (v10122025)"
+      ],
+      "fetched_kst": "2026-03-13T10:37+09:00",
+      "url": "https://www.caymanchem.com/forensics/publications/csl",
+      "name": "Cayman CSL Library"
+    },
+    "cayman_new_products": {
+      "hash": "0b4b5f19b70a9005eb37e7e319c67931247a31693e3537150ceaf92d675d9f44",
+      "token_count": 25,
+      "tokens_head": [
+        "Synthetic Opioid Analytical Standards Panel 1",
+        "Δ 9 -THCA-B (CRM)",
+        "Orphine (hydro chloride)",
+        "α-hydroxy Ethylbromazolam",
+        "Chlorphine (hydrochloride)",
+        "4-hydroxy Ethylbromazolam",
+        "β-hydroxy Ethylbromazolam",
+        "Methylmethcathinone Isomer Mixture",
+        "Narceine",
+        "Ethyl sulfate (sodium salt)",
+        "Benzscaline (hydro chloride)",
+        "nor- Spiroorphine"
+      ],
+      "tokens_all": [
+        "Synthetic Opioid Analytical Standards Panel 1",
+        "Δ 9 -THCA-B (CRM)",
+        "Orphine (hydro chloride)",
+        "α-hydroxy Ethylbromazolam",
+        "Chlorphine (hydrochloride)",
+        "4-hydroxy Ethylbromazolam",
+        "β-hydroxy Ethylbromazolam",
+        "Methylmethcathinone Isomer Mixture",
+        "Narceine",
+        "Ethyl sulfate (sodium salt)",
+        "Benzscaline (hydro chloride)",
+        "nor- Spiroorphine",
+        "N-Propionitrile Orphine (hydro chloride)",
+        "Triprolidine (hydrochloride)",
+        "Thiodesalkyl gidazepam",
+        "N-Piperidinyl Methiodone (hydrochloride)",
+        "7-hydroxy Mitragynine (CRM)",
+        "Δ 9 -THC-C9 (exempt preparation)",
+        "Δ 9 -THCB Butanoate (exempt preparation)",
+        "Protonitazene-d 7 (CRM)",
+        "Δ 8 -THC-C9 (exempt preparation)",
+        "6β-hydroxy Cannabidivarin",
+        "Methylfentanyl Isomer Mixture",
+        "Etizolam- 13 C 2 -d 4 (CRM)",
+        "(+)-Clobenzorex (hydrochloride)"
+      ],
+      "fetched_kst": "2026-03-13T10:37+09:00",
+      "url": "https://www.caymanchem.com/forensics/search/productSearch",
+      "name": "Cayman New Products"
+    }
+  }
+}

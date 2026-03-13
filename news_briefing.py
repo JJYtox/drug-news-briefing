@@ -571,6 +571,29 @@ class MonitorSpec:
     keep_jsonld: bool = False     # ✅ CSL 같은 페이지에서 JSON-LD(script) 유지 옵션
 
 
+def canonicalize_tokens(tokens: List[str], sort_tokens: bool = False) -> List[str]:
+    uniq: List[str] = []
+    seen: Set[str] = set()
+    for token in tokens:
+        key = str(token).strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        uniq.append(key)
+    if sort_tokens:
+        uniq.sort(key=str.lower)
+    return uniq
+
+
+def summarize_token_delta(prev_tokens: List[str], cur_tokens: List[str], max_items: int = 3) -> Tuple[List[str], List[str]]:
+    prev_set = {str(t).strip() for t in (prev_tokens or []) if str(t).strip()}
+    cur_set = {str(t).strip() for t in (cur_tokens or []) if str(t).strip()}
+
+    added = [t for t in (cur_tokens or []) if str(t).strip() and str(t).strip() not in prev_set]
+    removed = [t for t in (prev_tokens or []) if str(t).strip() and str(t).strip() not in cur_set]
+    return added[:max_items], removed[:max_items]
+
+
 def normalize_html(html: str, soften_dates: bool = True, keep_jsonld: bool = False) -> str:
     soup = BeautifulSoup(html, "html.parser")
 
@@ -891,6 +914,7 @@ def monitor_one(session: requests.Session, spec: MonitorSpec, prev_state: dict, 
     prev_entry = (prev_state or {}).get(spec.key, {}) if isinstance(prev_state, dict) else {}
     prev_hash = str(prev_entry.get("hash", "") or "")
     prev_tokens_head = list(prev_entry.get("tokens_head", []) or [])[:12]
+    prev_tokens_all = list(prev_entry.get("tokens_all", []) or [])
 
     def compute_changed(cur_hash: str) -> Optional[bool]:
         if not prev_hash:
@@ -950,15 +974,19 @@ def monitor_one(session: requests.Session, spec: MonitorSpec, prev_state: dict, 
             "error": err,
             "token_count": 0,
             "tokens_head": [],
+            "tokens_all": [],
             "prev_tokens_head": prev_tokens_head,  # ✅ FAIL이어도 전날 토큰 미리보기 제공
+            "prev_tokens_all": prev_tokens_all,
             "hash": "",
             "prev_hash": prev_hash,
             "fetched_kst": now_kst,
             "used_playwright": used_playwright,
         }
 
+    tokens = canonicalize_tokens(tokens, sort_tokens=(spec.key == "cayman_new_products"))
     fp_text = "\n".join(tokens)
     cur_hash = sha256_hex(fp_text)
+    added_tokens, removed_tokens = summarize_token_delta(prev_tokens_all, tokens)
 
     note = "playwright fallback used" if used_playwright else ""
     return {
@@ -971,6 +999,10 @@ def monitor_one(session: requests.Session, spec: MonitorSpec, prev_state: dict, 
         "token_count": len(tokens),
         "tokens_head": tokens[:12],
         "prev_tokens_head": prev_tokens_head,
+        "tokens_all": tokens,
+        "prev_tokens_all": prev_tokens_all,
+        "added_tokens": added_tokens,
+        "removed_tokens": removed_tokens,
         "hash": cur_hash,
         "prev_hash": prev_hash,
         "fetched_kst": now_kst,
@@ -1033,6 +1065,7 @@ def run_monitoring(session: requests.Session, prev_state: dict) -> Tuple[List[di
                 "hash": r["hash"],
                 "token_count": r.get("token_count", 0),
                 "tokens_head": r.get("tokens_head", [])[:12],
+                "tokens_all": r.get("tokens_all", []),
                 "fetched_kst": r.get("fetched_kst", ""),
                 "url": r.get("url", ""),
                 "name": r.get("name", ""),
@@ -1068,8 +1101,22 @@ def render_monitor_md(results: List[dict], summary: dict) -> str:
         else:
             changed = "NO"
 
-        toks = r.get("tokens_head", []) if r.get("ok") else (r.get("prev_tokens_head", []) or [])
-        preview = " / ".join([shorten(str(t), 45) for t in toks[:3]]) if toks else ""
+        if r.get("ok") and (r.get("changed") is True):
+            added = r.get("added_tokens", []) or []
+            removed = r.get("removed_tokens", []) or []
+            preview_parts: List[str] = []
+            if added:
+                preview_parts.extend([f"+ {shorten(str(t), 45)}" for t in added[:3]])
+            if removed:
+                preview_parts.extend([f"- {shorten(str(t), 45)}" for t in removed[:3]])
+            if preview_parts:
+                preview = " / ".join(preview_parts)
+            else:
+                toks = r.get("tokens_head", []) if r.get("ok") else (r.get("prev_tokens_head", []) or [])
+                preview = " / ".join([shorten(str(t), 45) for t in toks[:3]]) if toks else ""
+        else:
+            toks = r.get("tokens_head", []) if r.get("ok") else (r.get("prev_tokens_head", []) or [])
+            preview = " / ".join([shorten(str(t), 45) for t in toks[:3]]) if toks else ""
         lines.append(f"| {name} | {changed} | {escape_md(preview)} |")
 
     lines.append("")
@@ -1111,14 +1158,22 @@ def render_monitor_html(results: List[dict], summary: dict) -> str:
         else:
             changed = "NO"
 
-        toks = r.get("tokens_head", []) if r.get("ok") else (r.get("prev_tokens_head", []) or [])
         cur_toks = r.get("tokens_head", []) if r.get("ok") else (r.get("prev_tokens_head", []) or [])
         cur_preview = "<br>".join([escape_html(shorten(str(t), 55)) for t in cur_toks[:3]]) if cur_toks else ""
 
         preview_html = f"<code class='monitor-preview'>{cur_preview}</code>"
+        added = r.get("added_tokens", []) or []
+        removed = r.get("removed_tokens", []) or []
+        delta_lines: List[str] = []
+        if added:
+            delta_lines.extend([f"+ {escape_html(shorten(str(t), 55))}" for t in added[:3]])
+        if removed:
+            delta_lines.extend([f"- {escape_html(shorten(str(t), 55))}" for t in removed[:3]])
+        if delta_lines:
+            preview_html = f"<code class='monitor-preview'>{'<br>'.join(delta_lines)}</code>"
 
         # ✅ 변경(YES)인 경우: 이전 토큰도 같이 보여주기
-        if r.get("ok") and (r.get("changed") is True):
+        if r.get("ok") and (r.get("changed") is True) and (not delta_lines):
             prev_toks = r.get("prev_tokens_head", []) or []
             prev_preview = "<br>".join([escape_html(shorten(str(t), 55)) for t in prev_toks[:3]]) if prev_toks else ""
             if prev_preview:

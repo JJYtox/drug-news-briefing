@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <title>마약류 뉴스 브리핑 + 감시 점검</title>
+  <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div>
+        <h1>마약류 뉴스 브리핑 + 감시 점검</h1>
+        <div class="subline">생성 시각(KST): 2026-08-08T09:32+09:00</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <h2>뉴스 브리핑 (최근 24시간)</h2>
+      </div>
+      <div class='kpi'><span class='badge'>기사 14건</span><span class='badge'>사건 4개</span><span class='badge reset-filter-btn' onclick="filterByLab('all')">전체 사건 보기</span></div><div class='map-container'>
+    <div class="map-wrapper">
+      <div class="map-title-bar">
+        <div class="map-title-text">📍 대한민국 NFS 관할 연구소 지도</div>
+        <div class="map-title-sub">마커 클릭 시 해당 연구소 뉴스만 즉시 필터링</div>
+      </div>
+      <div id="nfs-leaflet-map" style="width: 100%; height: 420px; min-height: 420px; background: #0b0d10; border-radius: 10px; position: relative;"></div>
+    </div>
+    <script>
+    document.addEventListener("DOMContentLoaded", function() {
+      const container = document.getElementById("nfs-leaflet-map");
+      if (typeof L === "undefined") {
+        if (container) {
+          container.innerHTML = "<div style='display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:13px;'>지도 라이브러리(Leaflet)를 로딩 중입니다... (인터넷 연결 필요)</div>";
+        }
+        return;
+      }
+      
+      const map = L.map("nfs-leaflet-map", {
+        center: [35.8, 127.8],
+        zoom: 6.6,
+        zoomControl: false,
+        scrollWheelZoom: false
+      });
+
+      L.control.zoom({ position: 'topright' }).addTo(map);
+
+      L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+        attribution: '&copy; CARTO &copy; OSM',
+        subdomains: "abcd",
+        maxZoom: 19
+      }).addTo(map);
+
+      const labsData = [{"key": "서울연구소", "name": "서울연구소", "region": "수도권·서울", "lat": 37.5284, "lng": 126.834, "count": 1}, {"key": "본원(원주)", "name": "본원(원주)", "region": "강원권", "lat": 37.3422, "lng": 127.9201, "count": 0}, {"key": "대전연구소", "name": "대전연구소", "region": "충청·대전", "lat": 36.3768, "lng": 127.3871, "count": 0}, {"key": "대구연구소", "name": "대구연구소", "region": "경북·대구", "lat": 35.8714, "lng": 128.6014, "count": 0}, {"key": "부산연구소", "name": "부산연구소", "region": "부·울·경", "lat": 35.1796, "lng": 129.0756, "count": 0}, {"key": "광주연구소", "name": "광주연구소", "region": "호남·광주", "lat": 35.1595, "lng": 126.8526, "count": 0}, {"key": "제주연구소", "name": "제주연구소", "region": "제주권", "lat": 33.4996, "lng": 126.5312, "count": 0}];
+
+      labsData.forEach(function(lab) {
+        const isAlert = lab.count > 0;
+        const color = isAlert ? "#f6c177" : "#7aa2ff";
+        const radius = isAlert ? 14 : 9;
+
+        const circle = L.circleMarker([lab.lat, lab.lng], {
+          radius: radius,
+          fillColor: color,
+          color: "#ffffff",
+          weight: 2,
+          opacity: 0.95,
+          fillOpacity: 0.9
+        }).addTo(map);
+
+        const badgeHtml = `<div class="leaflet-lab-badge ${isAlert ? 'has-events' : ''}" onclick="filterByLab('${lab.key}')">${lab.name.replace('연구소','')} <b>${lab.count}</b></div>`;
+        const icon = L.divIcon({
+          html: badgeHtml,
+          className: 'leaflet-custom-icon',
+          iconSize: [75, 22],
+          iconAnchor: [-10, 10]
+        });
+        L.marker([lab.lat, lab.lng], {icon: icon}).addTo(map);
+
+        circle.bindTooltip(`<b>${lab.name} (${lab.region})</b><br>관할 뉴스: ${lab.count}건`);
+        circle.on("click", function() {
+          filterByLab(lab.key);
+        });
+      });
+    });
+    </script>
+    <div><div id='news-event-list'><div class='event' data-labs='서울연구소'><div class='event-head'><span class='event-no'>[사건 1]</span> <span class='meta'>[미디어인천신문]</span> <a href='https://news.google.com/rss/articles/CBMiakFVX3lxTE5vQmhJWEpILV9kU0tVbVZrUXA3REZOZkJfQVJmRkVkM0t6N2RNYUJfMnNZODFwdUg1YlM4ckpfdmx5LUd4bG93MldCMDlfY0RHR3lja2EzRzA2MTQtRnF3N0hhTU9oNVljSlE?oc=5' target='_blank' rel='noopener noreferrer'>해경청, 양귀비.대마 불법재배 등 마약사범 249명 무더기 검거</a> <span class='meta'>2026-08-08T05:42+09:00</span> <span class='badge small'>+10건</span> <span class='badge small lab-alert'>서울연구소</span></div></div><div class='event' data-labs=''><div class='event-head'><span class='event-no'>[사건 2]</span> <span class='meta'>[beyondpost.co.kr]</span> <a href='https://news.google.com/rss/articles/CBMifEFVX3lxTE1xcGRCZTJleFdDX0d1OEVIeF90UUljVW55RjYyaXA2ck1ORUpneG1mUnlESmVOZHQxUHFDbmtjbS14dGpGaFRiczhicGM4MUhhdGV1WHZXcVFoRmo1N3ZWckhaRWFQODJRekthdHpld05MTlNyMDFfVHdWNXk?oc=5' target='_blank' rel='noopener noreferrer'>마약 위장수사 시대, 변호인은 무엇을 다퉈야 하는가</a> <span class='meta'>2026-08-07T18:32+09:00</span></div></div><div class='event' data-labs=''><div class='event-head'><span class='event-no'>[사건 3]</span> <span class='meta'>[내외통신]</span> <a href='https://news.google.com/rss/articles/CBMia0FVX3lxTE8wdlJ1X3FJVVpxeEZxbVc2T1ZOeDFJTmNQS28wMDlPeGJrMTRjXzF3aHBveWhMXzg5UDNFTThoLTBmanJ1R3M0QnBPQ3hzMHRybEpNV01TVGlKZjg1dGk4V3FyTjJxcWhRR3dR?oc=5' target='_blank' rel='noopener noreferrer'>강남구 마약류 예방 통합모델, 광저우 국제 도시혁신상 우수사례 선정</a> <span class='meta'>2026-08-07T13:44+09:00</span></div></div><div class='event' data-labs=''><div class='event-head'><span class='event-no'>[사건 4]</span> <span class='meta'>[의약뉴스]</span> <a href='https://news.google.com/rss/articles/CBMiZ0FVX3lxTE54NExVWXh2TDlJc2p1ZTZmU3VqcVdBYjVrUk81UWowR2ZBSlR6Qnh4ZmJTMGpteUJlWUt0dUVWT0dfcHloVGlrU0o3M0NCRWFjWjJ4YW9sUHlNbnMtN00tZU16a1BiZlU?oc=5' target='_blank' rel='noopener noreferrer'>입법조사처 “마약류 중독 치료지속 시 본인부담 경감ㆍ재활 급여화해야”</a> <span class='meta'>2026-08-07T12:40+09:00</span></div></div></div></div></div>
+    <script>
+    function filterByLab(labName) {
+      const events = document.querySelectorAll('.event');
+      events.forEach(ev => {
+        if (labName === 'all') {
+          ev.style.display = 'block';
+        } else {
+          const labs = (ev.getAttribute('data-labs') || '').split(',');
+          ev.style.display = labs.includes(labName) ? 'block' : 'none';
+        }
+      });
+    }
+    </script>
+    
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <h2>감시 사이트 업데이트 점검</h2>
+      </div>
+      <div class='kpi'><span class='badge'>감시 업데이트 1</span><span class='badge warn'>확인 필요 0</span><span class='badge'>Cayman 현재 47</span><span class='badge'>Cayman 신규 1</span><span class='badge'>Cayman 누적 50</span></div><details open><summary>감시 사이트 점검 결과 (업데이트 1 · 확인 필요 0)</summary><div class='box'><div class='table-wrap monitor-table-wrap'><table class='table monitor-table'><thead><tr><th>사이트</th><th>변경</th><th>미리보기</th></tr></thead><tbody><tr><td data-label='사이트'><a href='https://swgdrug.org/' target='_blank' rel='noopener noreferrer'>SWGDRUG 홈</a></td><td data-label='변경'>NO</td><td data-label='토큰 미리보기'><div><span class='meta'>기존 유지</span><br><code class='monitor-preview'>SWGDRUG Recommendations v8.2 (approved June 27, 2024)<br>SWGDRUG MS Library v3.14 (dated January 22, 2025)</code></div></td></tr><tr><td data-label='사이트'><a href='https://www.caymanchem.com/forensics/publications/csl' target='_blank' rel='noopener noreferrer'>Cayman CSL Library</a></td><td data-label='변경'>NO</td><td data-label='토큰 미리보기'><div><span class='meta'>기존 유지</span><br><code class='monitor-preview'>CSL Library version: 2026-06-11 (v11062026)</code></div></td></tr><tr><td data-label='사이트'><a href='https://www.caymanchem.com/forensics/search/productSearch' target='_blank' rel='noopener noreferrer'>Cayman New Products</a></td><td data-label='변경'>YES</td><td data-label='토큰 미리보기'><div><span class='meta'>변경 내용</span><br><code class='monitor-preview'>Added 1<br>ADB-FUBINACA benzimidazolone analog</code></div></td></tr></tbody></table></div></div></details>
+    </div>
+
+    <div class="section collapsed-section">
+      <details>
+        <summary class="section-summary">
+          <span>Cayman New Products 분류 현황</span>
+          <span class="meta">펼쳐서 카테고리 누적 현황 보기</span>
+        </summary>
+        <div class="section-body">
+          <div class='kpi'><span class='badge'>현재 제품 47</span><span class='badge'>누적 제품 50</span><span class='badge'>카테고리 8</span><span class='badge'>최근 신규 1</span><span class='badge'>최근 확인 2026-08-08</span></div><details open><summary>Cayman 카테고리 주간 히트맵 트렌드 (숫자 클릭 시 세부 목록 표시)</summary><div class='box' style='padding:14px'><div class='heatmap-legend' style='flex-wrap:wrap; gap:10px;'><span>강도 범례:</span><span class='heatmap-legend-box heatmap-0'></span> 0건 <span class='heatmap-legend-box heatmap-1'></span> 1~2건 <span class='heatmap-legend-box heatmap-2'></span> 3~5건 <span class='heatmap-legend-box heatmap-3'></span> 6건+ <span class='heatmap-legend-box heatmap-new'></span> 신규 발생(+N) <span style='margin-left:auto; font-weight:700; color:var(--accent);'>💡 히트맵 숫자를 클릭하면 관련 제품 상세 목록이 아래에 표시됩니다.</span></div><div class='table-wrap'><table class='table trend-table'><thead><tr><th>카테고리 (전체보기)</th><th>08-08</th><th>08-07</th><th>08-06</th><th>08-05</th><th>08-04</th><th>08-03</th><th>07-10</th><th>07-09</th><th>07-08</th></tr></thead><tbody><tr><td class='heatmap-cat-label' data-category='analytical_standard' data-category-ko='분석표준품/동위원소표지' onclick='onHeatmapCategoryClick(this)' title='분석표준품/동위원소표지 전체 제품 보기'>분석표준품/동위원소표지</td><td class='heatmap-cell heatmap-1' data-category='analytical_standard' data-category-ko='분석표준품/동위원소표지' data-date='2026-08-08' data-cnt='2' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='분석표준품/동위원소표지 (2026-08-08): 2건 (신규 0건) 클릭하여 제품 보기'>2</td><td class='heatmap-cell heatmap-1' data-category='analytical_standard' data-category-ko='분석표준품/동위원소표지' data-date='2026-08-07' data-cnt='2' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='분석표준품/동위원소표지 (2026-08-07): 2건 (신규 0건) 클릭하여 제품 보기'>2</td><td class='heatmap-cell heatmap-1' data-category='analytical_standard' data-category-ko='분석표준품/동위원소표지' data-date='2026-08-06' data-cnt='2' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='분석표준품/동위원소표지 (2026-08-06): 2건 (신규 0건) 클릭하여 제품 보기'>2</td><td class='heatmap-cell heatmap-1' data-category='analytical_standard' data-category-ko='분석표준품/동위원소표지' data-date='2026-08-05' data-cnt='2' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='분석표준품/동위원소표지 (2026-08-05): 2건 (신규 0건) 클릭하여 제품 보기'>2</td><td class='heatmap-cell heatmap-1' data-category='analytical_standard' data-category-ko='분석표준품/동위원소표지' data-date='2026-08-04' data-cnt='2' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='분석표준품/동위원소표지 (2026-08-04): 2건 (신규 0건) 클릭하여 제품 보기'>2</td><td class='heatmap-cell heatmap-1' data-category='analytical_standard' data-category-ko='분석표준품/동위원소표지' data-date='2026-08-03' data-cnt='2' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='분석표준품/동위원소표지 (2026-08-03): 2건 (신규 0건) 클릭하여 제품 보기'>2</td><td class='heatmap-cell heatmap-1' data-category='analytical_standard' data-category-ko='분석표준품/동위원소표지' data-date='2026-07-10' data-cnt='2' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='분석표준품/동위원소표지 (2026-07-10): 2건 (신규 0건) 클릭하여 제품 보기'>2</td><td class='heatmap-cell heatmap-1' data-category='analytical_standard' data-category-ko='분석표준품/동위원소표지' data-date='2026-07-09' data-cnt='2' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='분석표준품/동위원소표지 (2026-07-09): 2건 (신규 0건) 클릭하여 제품 보기'>2</td><td class='heatmap-cell heatmap-1 heatmap-new' data-category='analytical_standard' data-category-ko='분석표준품/동위원소표지' data-date='2026-07-08' data-cnt='2' data-new-cnt='2' onclick='onHeatmapCellClick(this)' title='분석표준품/동위원소표지 (2026-07-08): 2건 (신규 2건) 클릭하여 제품 보기'>2 (+2)</td></tr><tr><td class='heatmap-cat-label' data-category='benzodiazepine_sedative' data-category-ko='벤조디아제핀/진정제' onclick='onHeatmapCategoryClick(this)' title='벤조디아제핀/진정제 전체 제품 보기'>벤조디아제핀/진정제</td><td class='heatmap-cell heatmap-2' data-category='benzodiazepine_sedative' data-category-ko='벤조디아제핀/진정제' data-date='2026-08-08' data-cnt='3' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='벤조디아제핀/진정제 (2026-08-08): 3건 (신규 0건) 클릭하여 제품 보기'>3</td><td class='heatmap-cell heatmap-2' data-category='benzodiazepine_sedative' data-category-ko='벤조디아제핀/진정제' data-date='2026-08-07' data-cnt='3' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='벤조디아제핀/진정제 (2026-08-07): 3건 (신규 0건) 클릭하여 제품 보기'>3</td><td class='heatmap-cell heatmap-2' data-category='benzodiazepine_sedative' data-category-ko='벤조디아제핀/진정제' data-date='2026-08-06' data-cnt='3' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='벤조디아제핀/진정제 (2026-08-06): 3건 (신규 0건) 클릭하여 제품 보기'>3</td><td class='heatmap-cell heatmap-2' data-category='benzodiazepine_sedative' data-category-ko='벤조디아제핀/진정제' data-date='2026-08-05' data-cnt='3' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='벤조디아제핀/진정제 (2026-08-05): 3건 (신규 0건) 클릭하여 제품 보기'>3</td><td class='heatmap-cell heatmap-2' data-category='benzodiazepine_sedative' data-category-ko='벤조디아제핀/진정제' data-date='2026-08-04' data-cnt='3' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='벤조디아제핀/진정제 (2026-08-04): 3건 (신규 0건) 클릭하여 제품 보기'>3</td><td class='heatmap-cell heatmap-2 heatmap-new' data-category='benzodiazepine_sedative' data-category-ko='벤조디아제핀/진정제' data-date='2026-08-03' data-cnt='3' data-new-cnt='2' onclick='onHeatmapCellClick(this)' title='벤조디아제핀/진정제 (2026-08-03): 3건 (신규 2건) 클릭하여 제품 보기'>3 (+2)</td><td class='heatmap-cell heatmap-1' data-category='benzodiazepine_sedative' data-category-ko='벤조디아제핀/진정제' data-date='2026-07-10' data-cnt='1' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='벤조디아제핀/진정제 (2026-07-10): 1건 (신규 0건) 클릭하여 제품 보기'>1</td><td class='heatmap-cell heatmap-1' data-category='benzodiazepine_sedative' data-category-ko='벤조디아제핀/진정제' data-date='2026-07-09' data-cnt='1' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='벤조디아제핀/진정제 (2026-07-09): 1건 (신규 0건) 클릭하여 제품 보기'>1</td><td class='heatmap-cell heatmap-1 heatmap-new' data-category='benzodiazepine_sedative' data-category-ko='벤조디아제핀/진정제' data-date='2026-07-08' data-cnt='1' data-new-cnt='1' onclick='onHeatmapCellClick(this)' title='벤조디아제핀/진정제 (2026-07-08): 1건 (신규 1건) 클릭하여 제품 보기'>1 (+1)</td></tr><tr><td class='heatmap-cat-label' data-category='cannabinoid' data-category-ko='칸나비노이드/대마계' onclick='onHeatmapCategoryClick(this)' title='칸나비노이드/대마계 전체 제품 보기'>칸나비노이드/대마계</td><td class='heatmap-cell heatmap-3 heatmap-new' data-category='cannabinoid' data-category-ko='칸나비노이드/대마계' data-date='2026-08-08' data-cnt='9' data-new-cnt='1' onclick='onHeatmapCellClick(this)' title='칸나비노이드/대마계 (2026-08-08): 9건 (신규 1건) 클릭하여 제품 보기'>9 (+1)</td><td class='heatmap-cell heatmap-3' data-category='cannabinoid' data-category-ko='칸나비노이드/대마계' data-date='2026-08-07' data-cnt='8' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='칸나비노이드/대마계 (2026-08-07): 8건 (신규 0건) 클릭하여 제품 보기'>8</td><td class='heatmap-cell heatmap-3' data-category='cannabinoid' data-category-ko='칸나비노이드/대마계' data-date='2026-08-06' data-cnt='8' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='칸나비노이드/대마계 (2026-08-06): 8건 (신규 0건) 클릭하여 제품 보기'>8</td><td class='heatmap-cell heatmap-3 heatmap-new' data-category='cannabinoid' data-category-ko='칸나비노이드/대마계' data-date='2026-08-05' data-cnt='8' data-new-cnt='1' onclick='onHeatmapCellClick(this)' title='칸나비노이드/대마계 (2026-08-05): 8건 (신규 1건) 클릭하여 제품 보기'>8 (+1)</td><td class='heatmap-cell heatmap-3' data-category='cannabinoid' data-category-ko='칸나비노이드/대마계' data-date='2026-08-04' data-cnt='7' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='칸나비노이드/대마계 (2026-08-04): 7건 (신규 0건) 클릭하여 제품 보기'>7</td><td class='heatmap-cell heatmap-3 heatmap-new' data-category='cannabinoid' data-category-ko='칸나비노이드/대마계' data-date='2026-08-03' data-cnt='7' data-new-cnt='3' onclick='onHeatmapCellClick(this)' title='칸나비노이드/대마계 (2026-08-03): 7건 (신규 3건) 클릭하여 제품 보기'>7 (+3)</td><td class='heatmap-cell heatmap-2' data-category='cannabinoid' data-category-ko='칸나비노이드/대마계' data-date='2026-07-10' data-cnt='4' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='칸나비노이드/대마계 (2026-07-10): 4건 (신규 0건) 클릭하여 제품 보기'>4</td><td class='heatmap-cell heatmap-2' data-category='cannabinoid' data-category-ko='칸나비노이드/대마계' data-date='2026-07-09' data-cnt='5' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='칸나비노이드/대마계 (2026-07-09): 5건 (신규 0건) 클릭하여 제품 보기'>5</td><td class='heatmap-cell heatmap-2 heatmap-new' data-category='cannabinoid' data-category-ko='칸나비노이드/대마계' data-date='2026-07-08' data-cnt='5' data-new-cnt='5' onclick='onHeatmapCellClick(this)' title='칸나비노이드/대마계 (2026-07-08): 5건 (신규 5건) 클릭하여 제품 보기'>5 (+5)</td></tr><tr><td class='heatmap-cat-label' data-category='metabolite' data-category-ko='대사체/분해산물' onclick='onHeatmapCategoryClick(this)' title='대사체/분해산물 전체 제품 보기'>대사체/분해산물</td><td class='heatmap-cell heatmap-2' data-category='metabolite' data-category-ko='대사체/분해산물' data-date='2026-08-08' data-cnt='4' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='대사체/분해산물 (2026-08-08): 4건 (신규 0건) 클릭하여 제품 보기'>4</td><td class='heatmap-cell heatmap-2' data-category='metabolite' data-category-ko='대사체/분해산물' data-date='2026-08-07' data-cnt='4' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='대사체/분해산물 (2026-08-07): 4건 (신규 0건) 클릭하여 제품 보기'>4</td><td class='heatmap-cell heatmap-2' data-category='metabolite' data-category-ko='대사체/분해산물' data-date='2026-08-06' data-cnt='4' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='대사체/분해산물 (2026-08-06): 4건 (신규 0건) 클릭하여 제품 보기'>4</td><td class='heatmap-cell heatmap-2 heatmap-new' data-category='metabolite' data-category-ko='대사체/분해산물' data-date='2026-08-05' data-cnt='4' data-new-cnt='1' onclick='onHeatmapCellClick(this)' title='대사체/분해산물 (2026-08-05): 4건 (신규 1건) 클릭하여 제품 보기'>4 (+1)</td><td class='heatmap-cell heatmap-2' data-category='metabolite' data-category-ko='대사체/분해산물' data-date='2026-08-04' data-cnt='3' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='대사체/분해산물 (2026-08-04): 3건 (신규 0건) 클릭하여 제품 보기'>3</td><td class='heatmap-cell heatmap-2' data-category='metabolite' data-category-ko='대사체/분해산물' data-date='2026-08-03' data-cnt='3' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='대사체/분해산물 (2026-08-03): 3건 (신규 0건) 클릭하여 제품 보기'>3</td><td class='heatmap-cell heatmap-2' data-category='metabolite' data-category-ko='대사체/분해산물' data-date='2026-07-10' data-cnt='3' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='대사체/분해산물 (2026-07-10): 3건 (신규 0건) 클릭하여 제품 보기'>3</td><td class='heatmap-cell heatmap-2' data-category='metabolite' data-category-ko='대사체/분해산물' data-date='2026-07-09' data-cnt='3' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='대사체/분해산물 (2026-07-09): 3건 (신규 0건) 클릭하여 제품 보기'>3</td><td class='heatmap-cell heatmap-2 heatmap-new' data-category='metabolite' data-category-ko='대사체/분해산물' data-date='2026-07-08' data-cnt='3' data-new-cnt='3' onclick='onHeatmapCellClick(this)' title='대사체/분해산물 (2026-07-08): 3건 (신규 3건) 클릭하여 제품 보기'>3 (+3)</td></tr><tr><td class='heatmap-cat-label' data-category='opioid' data-category-ko='오피오이드' onclick='onHeatmapCategoryClick(this)' title='오피오이드 전체 제품 보기'>오피오이드</td><td class='heatmap-cell heatmap-3' data-category='opioid' data-category-ko='오피오이드' data-date='2026-08-08' data-cnt='9' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='오피오이드 (2026-08-08): 9건 (신규 0건) 클릭하여 제품 보기'>9</td><td class='heatmap-cell heatmap-3' data-category='opioid' data-category-ko='오피오이드' data-date='2026-08-07' data-cnt='9' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='오피오이드 (2026-08-07): 9건 (신규 0건) 클릭하여 제품 보기'>9</td><td class='heatmap-cell heatmap-3' data-category='opioid' data-category-ko='오피오이드' data-date='2026-08-06' data-cnt='9' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='오피오이드 (2026-08-06): 9건 (신규 0건) 클릭하여 제품 보기'>9</td><td class='heatmap-cell heatmap-3' data-category='opioid' data-category-ko='오피오이드' data-date='2026-08-05' data-cnt='9' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='오피오이드 (2026-08-05): 9건 (신규 0건) 클릭하여 제품 보기'>9</td><td class='heatmap-cell heatmap-3' data-category='opioid' data-category-ko='오피오이드' data-date='2026-08-04' data-cnt='9' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='오피오이드 (2026-08-04): 9건 (신규 0건) 클릭하여 제품 보기'>9</td><td class='heatmap-cell heatmap-3 heatmap-new' data-category='opioid' data-category-ko='오피오이드' data-date='2026-08-03' data-cnt='9' data-new-cnt='3' onclick='onHeatmapCellClick(this)' title='오피오이드 (2026-08-03): 9건 (신규 3건) 클릭하여 제품 보기'>9 (+3)</td><td class='heatmap-cell heatmap-3 heatmap-new' data-category='opioid' data-category-ko='오피오이드' data-date='2026-07-10' data-cnt='6' data-new-cnt='1' onclick='onHeatmapCellClick(this)' title='오피오이드 (2026-07-10): 6건 (신규 1건) 클릭하여 제품 보기'>6 (+1)</td><td class='heatmap-cell heatmap-2' data-category='opioid' data-category-ko='오피오이드' data-date='2026-07-09' data-cnt='5' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='오피오이드 (2026-07-09): 5건 (신규 0건) 클릭하여 제품 보기'>5</td><td class='heatmap-cell heatmap-2 heatmap-new' data-category='opioid' data-category-ko='오피오이드' data-date='2026-07-08' data-cnt='5' data-new-cnt='5' onclick='onHeatmapCellClick(this)' title='오피오이드 (2026-07-08): 5건 (신규 5건) 클릭하여 제품 보기'>5 (+5)</td></tr><tr><td class='heatmap-cat-label' data-category='other' data-category-ko='기타/미분류' onclick='onHeatmapCategoryClick(this)' title='기타/미분류 전체 제품 보기'>기타/미분류</td><td class='heatmap-cell heatmap-3' data-category='other' data-category-ko='기타/미분류' data-date='2026-08-08' data-cnt='17' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='기타/미분류 (2026-08-08): 17건 (신규 0건) 클릭하여 제품 보기'>17</td><td class='heatmap-cell heatmap-3' data-category='other' data-category-ko='기타/미분류' data-date='2026-08-07' data-cnt='17' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='기타/미분류 (2026-08-07): 17건 (신규 0건) 클릭하여 제품 보기'>17</td><td class='heatmap-cell heatmap-3' data-category='other' data-category-ko='기타/미분류' data-date='2026-08-06' data-cnt='17' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='기타/미분류 (2026-08-06): 17건 (신규 0건) 클릭하여 제품 보기'>17</td><td class='heatmap-cell heatmap-3 heatmap-new' data-category='other' data-category-ko='기타/미분류' data-date='2026-08-05' data-cnt='17' data-new-cnt='1' onclick='onHeatmapCellClick(this)' title='기타/미분류 (2026-08-05): 17건 (신규 1건) 클릭하여 제품 보기'>17 (+1)</td><td class='heatmap-cell heatmap-3' data-category='other' data-category-ko='기타/미분류' data-date='2026-08-04' data-cnt='16' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='기타/미분류 (2026-08-04): 16건 (신규 0건) 클릭하여 제품 보기'>16</td><td class='heatmap-cell heatmap-3 heatmap-new' data-category='other' data-category-ko='기타/미분류' data-date='2026-08-03' data-cnt='16' data-new-cnt='8' onclick='onHeatmapCellClick(this)' title='기타/미분류 (2026-08-03): 16건 (신규 8건) 클릭하여 제품 보기'>16 (+8)</td><td class='heatmap-cell heatmap-3 heatmap-new' data-category='other' data-category-ko='기타/미분류' data-date='2026-07-10' data-cnt='8' data-new-cnt='1' onclick='onHeatmapCellClick(this)' title='기타/미분류 (2026-07-10): 8건 (신규 1건) 클릭하여 제품 보기'>8 (+1)</td><td class='heatmap-cell heatmap-3 heatmap-new' data-category='other' data-category-ko='기타/미분류' data-date='2026-07-09' data-cnt='8' data-new-cnt='1' onclick='onHeatmapCellClick(this)' title='기타/미분류 (2026-07-09): 8건 (신규 1건) 클릭하여 제품 보기'>8 (+1)</td><td class='heatmap-cell heatmap-3 heatmap-new' data-category='other' data-category-ko='기타/미분류' data-date='2026-07-08' data-cnt='7' data-new-cnt='7' onclick='onHeatmapCellClick(this)' title='기타/미분류 (2026-07-08): 7건 (신규 7건) 클릭하여 제품 보기'>7 (+7)</td></tr><tr><td class='heatmap-cat-label' data-category='psychedelic' data-category-ko='환각제/사이키델릭' onclick='onHeatmapCategoryClick(this)' title='환각제/사이키델릭 전체 제품 보기'>환각제/사이키델릭</td><td class='heatmap-cell heatmap-1' data-category='psychedelic' data-category-ko='환각제/사이키델릭' data-date='2026-08-08' data-cnt='1' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='환각제/사이키델릭 (2026-08-08): 1건 (신규 0건) 클릭하여 제품 보기'>1</td><td class='heatmap-cell heatmap-1' data-category='psychedelic' data-category-ko='환각제/사이키델릭' data-date='2026-08-07' data-cnt='1' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='환각제/사이키델릭 (2026-08-07): 1건 (신규 0건) 클릭하여 제품 보기'>1</td><td class='heatmap-cell heatmap-1' data-category='psychedelic' data-category-ko='환각제/사이키델릭' data-date='2026-08-06' data-cnt='1' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='환각제/사이키델릭 (2026-08-06): 1건 (신규 0건) 클릭하여 제품 보기'>1</td><td class='heatmap-cell heatmap-1' data-category='psychedelic' data-category-ko='환각제/사이키델릭' data-date='2026-08-05' data-cnt='1' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='환각제/사이키델릭 (2026-08-05): 1건 (신규 0건) 클릭하여 제품 보기'>1</td><td class='heatmap-cell heatmap-1' data-category='psychedelic' data-category-ko='환각제/사이키델릭' data-date='2026-08-04' data-cnt='1' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='환각제/사이키델릭 (2026-08-04): 1건 (신규 0건) 클릭하여 제품 보기'>1</td><td class='heatmap-cell heatmap-1 heatmap-new' data-category='psychedelic' data-category-ko='환각제/사이키델릭' data-date='2026-08-03' data-cnt='1' data-new-cnt='1' onclick='onHeatmapCellClick(this)' title='환각제/사이키델릭 (2026-08-03): 1건 (신규 1건) 클릭하여 제품 보기'>1 (+1)</td><td class='heatmap-cell heatmap-0' data-category='psychedelic' data-category-ko='환각제/사이키델릭' data-date='2026-07-10' data-cnt='0' data-new-cnt='0' onclick='onHeatmapCellClick(this)'>-</td><td class='heatmap-cell heatmap-0' data-category='psychedelic' data-category-ko='환각제/사이키델릭' data-date='2026-07-09' data-cnt='0' data-new-cnt='0' onclick='onHeatmapCellClick(this)'>-</td><td class='heatmap-cell heatmap-0' data-category='psychedelic' data-category-ko='환각제/사이키델릭' data-date='2026-07-08' data-cnt='0' data-new-cnt='0' onclick='onHeatmapCellClick(this)'>-</td></tr><tr><td class='heatmap-cat-label' data-category='steroid_hormone' data-category-ko='스테로이드/호르몬' onclick='onHeatmapCategoryClick(this)' title='스테로이드/호르몬 전체 제품 보기'>스테로이드/호르몬</td><td class='heatmap-cell heatmap-1' data-category='steroid_hormone' data-category-ko='스테로이드/호르몬' data-date='2026-08-08' data-cnt='2' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='스테로이드/호르몬 (2026-08-08): 2건 (신규 0건) 클릭하여 제품 보기'>2</td><td class='heatmap-cell heatmap-1 heatmap-new' data-category='steroid_hormone' data-category-ko='스테로이드/호르몬' data-date='2026-08-07' data-cnt='2' data-new-cnt='1' onclick='onHeatmapCellClick(this)' title='스테로이드/호르몬 (2026-08-07): 2건 (신규 1건) 클릭하여 제품 보기'>2 (+1)</td><td class='heatmap-cell heatmap-1' data-category='steroid_hormone' data-category-ko='스테로이드/호르몬' data-date='2026-08-06' data-cnt='1' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='스테로이드/호르몬 (2026-08-06): 1건 (신규 0건) 클릭하여 제품 보기'>1</td><td class='heatmap-cell heatmap-1' data-category='steroid_hormone' data-category-ko='스테로이드/호르몬' data-date='2026-08-05' data-cnt='1' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='스테로이드/호르몬 (2026-08-05): 1건 (신규 0건) 클릭하여 제품 보기'>1</td><td class='heatmap-cell heatmap-1' data-category='steroid_hormone' data-category-ko='스테로이드/호르몬' data-date='2026-08-04' data-cnt='1' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='스테로이드/호르몬 (2026-08-04): 1건 (신규 0건) 클릭하여 제품 보기'>1</td><td class='heatmap-cell heatmap-1' data-category='steroid_hormone' data-category-ko='스테로이드/호르몬' data-date='2026-08-03' data-cnt='1' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='스테로이드/호르몬 (2026-08-03): 1건 (신규 0건) 클릭하여 제품 보기'>1</td><td class='heatmap-cell heatmap-1' data-category='steroid_hormone' data-category-ko='스테로이드/호르몬' data-date='2026-07-10' data-cnt='1' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='스테로이드/호르몬 (2026-07-10): 1건 (신규 0건) 클릭하여 제품 보기'>1</td><td class='heatmap-cell heatmap-1' data-category='steroid_hormone' data-category-ko='스테로이드/호르몬' data-date='2026-07-09' data-cnt='1' data-new-cnt='0' onclick='onHeatmapCellClick(this)' title='스테로이드/호르몬 (2026-07-09): 1건 (신규 0건) 클릭하여 제품 보기'>1</td><td class='heatmap-cell heatmap-1 heatmap-new' data-category='steroid_hormone' data-category-ko='스테로이드/호르몬' data-date='2026-07-08' data-cnt='2' data-new-cnt='2' onclick='onHeatmapCellClick(this)' title='스테로이드/호르몬 (2026-07-08): 2건 (신규 2건) 클릭하여 제품 보기'>2 (+2)</td></tr></tbody></table></div><div id='heatmap-detail-box' class='heatmap-detail-box' style='margin-top:16px; padding:16px; background:var(--surface-2); border-radius:var(--radius); border:1px solid var(--border);'></div></div></details>
+<script id="cayman-catalog-json" type="application/json">
+[{"product_name": "(S)-6-Methyl nicotine (CRM)", "primary_category": "analytical_standard", "primary_category_ko": "분석표준품/동위원소표지", "category_tags": "analytical_standard", "first_seen_date": "2026-07-08", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "N-Propio nitrile Chlorphine (hydro chloride) (CRM)", "primary_category": "analytical_standard", "primary_category_ko": "분석표준품/동위원소표지", "category_tags": "analytical_standard", "first_seen_date": "2026-07-08", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "4-hydroxy Ethylflual prazolam", "primary_category": "benzodiazepine_sedative", "primary_category_ko": "벤조디아제핀/진정제", "category_tags": "benzodiazepine_sedative;metabolite", "first_seen_date": "2026-08-03", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "Pyrazolam (CRM)", "primary_category": "benzodiazepine_sedative", "primary_category_ko": "벤조디아제핀/진정제", "category_tags": "benzodiazepine_sedative;analytical_standard", "first_seen_date": "2026-07-08", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "α-hydroxy Deschloro etizolam", "primary_category": "benzodiazepine_sedative", "primary_category_ko": "벤조디아제핀/진정제", "category_tags": "benzodiazepine_sedative;metabolite", "first_seen_date": "2026-08-03", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "5-chloro MDMB-PINACA", "primary_category": "cannabinoid", "primary_category_ko": "칸나비노이드/대마계", "category_tags": "cannabinoid", "first_seen_date": "2026-07-08", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "6β-hydroxy Cannabidiol", "primary_category": "cannabinoid", "primary_category_ko": "칸나비노이드/대마계", "category_tags": "cannabinoid;metabolite", "first_seen_date": "2026-08-03", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "ADB-FUBINACA benzimidazolone analog", "primary_category": "cannabinoid", "primary_category_ko": "칸나비노이드/대마계", "category_tags": "cannabinoid", "first_seen_date": "2026-08-08", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "Cannabigerolic Acid-d 9", "primary_category": "cannabinoid", "primary_category_ko": "칸나비노이드/대마계", "category_tags": "cannabinoid", "first_seen_date": "2026-07-08", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "FUB-JWH 018-d 5", "primary_category": "cannabinoid", "primary_category_ko": "칸나비노이드/대마계", "category_tags": "cannabinoid", "first_seen_date": "2026-08-03", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "JWH-018-S", "primary_category": "cannabinoid", "primary_category_ko": "칸나비노이드/대마계", "category_tags": "cannabinoid", "first_seen_date": "2026-07-08", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "MDMB-5'Br-PINACA", "primary_category": "cannabinoid", "primary_category_ko": "칸나비노이드/대마계", "category_tags": "cannabinoid", "first_seen_date": "2026-08-05", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "MDMB-PINACA butanoic acid metabolite", "primary_category": "cannabinoid", "primary_category_ko": "칸나비노이드/대마계", "category_tags": "cannabinoid;metabolite", "first_seen_date": "2026-08-03", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "Δ 9 -THC-d 9 (CRM)", "primary_category": "cannabinoid", "primary_category_ko": "칸나비노이드/대마계", "category_tags": "cannabinoid;analytical_standard", "first_seen_date": "2026-07-08", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "10-fluoro dihydro-7- hydroxy Mitragynine", "primary_category": "metabolite", "primary_category_ko": "대사체/분해산물", "category_tags": "metabolite", "first_seen_date": "2026-07-08", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "5-chloro nor-Orphine", "primary_category": "metabolite", "primary_category_ko": "대사체/분해산물", "category_tags": "metabolite", "first_seen_date": "2026-07-08", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "N-hydroxy EDMA (hydrochloride)", "primary_category": "metabolite", "primary_category_ko": "대사체/분해산물", "category_tags": "metabolite", "first_seen_date": "2026-08-05", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "N-Propionitrile nor-Orphine (hydro chloride)", "primary_category": "metabolite", "primary_category_ko": "대사체/분해산물", "category_tags": "metabolite", "first_seen_date": "2026-07-08", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "3'-chloro Metonitazene (citrate)", "primary_category": "opioid", "primary_category_ko": "오피오이드", "category_tags": "opioid", "first_seen_date": "2026-07-08", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "5,6-dichloro Desmethyl brorphine", "primary_category": "opioid", "primary_category_ko": "오피오이드", "category_tags": "opioid", "first_seen_date": "2026-07-08", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "5-Aminometo nitazene", "primary_category": "opioid", "primary_category_ko": "오피오이드", "category_tags": "opioid", "first_seen_date": "2026-07-10", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "5-chloro Desmethylbrorphine", "primary_category": "opioid", "primary_category_ko": "오피오이드", "category_tags": "opioid", "first_seen_date": "2026-08-03", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "Acetyl fentanyl-d 5 (hydrochloride) (CRM)", "primary_category": "opioid", "primary_category_ko": "오피오이드", "category_tags": "opioid;analytical_standard", "first_seen_date": "2026-08-03", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "Acetyl norfentanyl (hydro chloride) (CRM)", "primary_category": "opioid", "primary_category_ko": "오피오이드", "category_tags": "opioid;analytical_standard", "first_seen_date": "2026-07-08", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "Morphine N-oxide", "primary_category": "opioid", "primary_category_ko": "오피오이드", "category_tags": "opioid", "first_seen_date": "2026-07-08", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "N- propionitrile- 5-chloro Desmethyl brorphine (hydro chloride)", "primary_category": "opioid", "primary_category_ko": "오피오이드", "category_tags": "opioid", "first_seen_date": "2026-08-03", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "N-Pyrrolidino 5-Amino Isotodesnitazene", "primary_category": "opioid", "primary_category_ko": "오피오이드", "category_tags": "opioid", "first_seen_date": "2026-07-08", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "(±)-4-fluoro Metomidate", "primary_category": "other", "primary_category_ko": "기타/미분류", "category_tags": "other", "first_seen_date": "2026-08-03", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "4-Androstenediol (exempt preparation)", "primary_category": "other", "primary_category_ko": "기타/미분류", "category_tags": "other", "first_seen_date": "2026-07-08", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "5,6-dichloro Desmethyl orphine", "primary_category": "other", "primary_category_ko": "기타/미분류", "category_tags": "other", "first_seen_date": "2026-08-03", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "5-Androstenediol (exempt preparation)", "primary_category": "other", "primary_category_ko": "기타/미분류", "category_tags": "other", "first_seen_date": "2026-07-08", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "7-acetoxy Mitragynine", "primary_category": "other", "primary_category_ko": "기타/미분류", "category_tags": "other", "first_seen_date": "2026-07-09", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "A-IATA", "primary_category": "other", "primary_category_ko": "기타/미분류", "category_tags": "other", "first_seen_date": "2026-08-03", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "A-INACA", "primary_category": "other", "primary_category_ko": "기타/미분류", "category_tags": "other", "first_seen_date": "2026-07-08", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "Amfonelic Acid", "primary_category": "other", "primary_category_ko": "기타/미분류", "category_tags": "other", "first_seen_date": "2026-07-08", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "Carboetomidate", "primary_category": "other", "primary_category_ko": "기타/미분류", "category_tags": "other", "first_seen_date": "2026-08-03", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "Dihydromitragynine", "primary_category": "other", "primary_category_ko": "기타/미분류", "category_tags": "other", "first_seen_date": "2026-07-08", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "Gabapentin- 13 C 3", "primary_category": "other", "primary_category_ko": "기타/미분류", "category_tags": "other", "first_seen_date": "2026-08-03", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "Ibogaminalog (hydro chloride)", "primary_category": "other", "primary_category_ko": "기타/미분류", "category_tags": "other", "first_seen_date": "2026-07-10", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "MAB-CHMINACA- d 4 (exempt preparation)", "primary_category": "other", "primary_category_ko": "기타/미분류", "category_tags": "other", "first_seen_date": "2026-08-03", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "N-Propionitrile Chlorphine- 13 C 3 (hydro chloride)", "primary_category": "other", "primary_category_ko": "기타/미분류", "category_tags": "other", "first_seen_date": "2026-08-03", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "Phenibut-d 5 (hydrochloride)", "primary_category": "other", "primary_category_ko": "기타/미분류", "category_tags": "other", "first_seen_date": "2026-08-05", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "Pregabalin ethyl ester (hydro chloride)", "primary_category": "other", "primary_category_ko": "기타/미분류", "category_tags": "other", "first_seen_date": "2026-08-03", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "SR-17018 (hydro chloride)", "primary_category": "other", "primary_category_ko": "기타/미분류", "category_tags": "other", "first_seen_date": "2026-07-08", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "2C-B Tosylate", "primary_category": "psychedelic", "primary_category_ko": "환각제/사이키델릭", "category_tags": "psychedelic", "first_seen_date": "2026-08-03", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "Testosterone Hexahydrobenzoate", "primary_category": "steroid_hormone", "primary_category_ko": "스테로이드/호르몬", "category_tags": "steroid_hormone", "first_seen_date": "2026-07-08", "last_seen_date": "2026-08-08", "currently_listed": true}, {"product_name": "Testosterone Nicotinate", "primary_category": "steroid_hormone", "primary_category_ko": "스테로이드/호르몬", "category_tags": "steroid_hormone", "first_seen_date": "2026-08-07", "last_seen_date": "2026-08-08", "currently_listed": true}]
+</script>
+
+<script>
+(function() {
+  let caymanCatalogData = [];
+  try {
+    caymanCatalogData = JSON.parse(document.getElementById('cayman-catalog-json').textContent || '[]');
+  } catch(e) {
+    console.error("Failed to parse cayman catalog json", e);
+  }
+
+  function escapeHtml(s) {
+    return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  window.onHeatmapCellClick = function(cell) {
+    document.querySelectorAll('.heatmap-cell, .heatmap-cat-label').forEach(c => c.classList.remove('selected'));
+    cell.classList.add('selected');
+    const cat = cell.getAttribute('data-category');
+    const catKo = cell.getAttribute('data-category-ko');
+    const date = cell.getAttribute('data-date');
+    const cnt = parseInt(cell.getAttribute('data-cnt') || '0', 10);
+    const newCnt = parseInt(cell.getAttribute('data-new-cnt') || '0', 10);
+    renderHeatmapDetail(cat, catKo, date, cnt, newCnt);
+  };
+
+  window.onHeatmapCategoryClick = function(cell) {
+    document.querySelectorAll('.heatmap-cell, .heatmap-cat-label').forEach(c => c.classList.remove('selected'));
+    cell.classList.add('selected');
+    const cat = cell.getAttribute('data-category');
+    const catKo = cell.getAttribute('data-category-ko');
+    renderHeatmapDetail(cat, catKo, 'all', 0, 0);
+  };
+
+  function renderHeatmapDetail(cat, catKo, date, cnt, newCnt) {
+    const detailBox = document.getElementById('heatmap-detail-box');
+    if (!detailBox) return;
+
+    const categoryProducts = caymanCatalogData.filter(item => item.primary_category === cat);
+
+    let headerTitle = '';
+    let badgeHtml = '';
+    let displayProducts = [];
+
+    if (date === 'all' || !date) {
+      headerTitle = `📍 ${escapeHtml(catKo)} 카테고리 전체 누적 제품 목록 (총 ${categoryProducts.length}종)`;
+      badgeHtml = `<span class='badge'>카탈로그 전체: ${categoryProducts.length}종</span>`;
+      displayProducts = categoryProducts;
+    } else {
+      const dateFormatted = date.length >= 10 ? `${date.substring(5, 7)}월 ${date.substring(8, 10)}일` : date;
+      const newlyAdded = categoryProducts.filter(item => item.first_seen_date === date);
+      const existing = categoryProducts.filter(item => item.first_seen_date !== date);
+
+      headerTitle = `📍 ${dateFormatted} 기준 · ${escapeHtml(catKo)} 제품 상세 목록`;
+      
+      const newBadge = newlyAdded.length > 0 
+        ? `<span class='badge warn' style='background:rgba(246, 193, 119, 0.25); color:var(--warn); border-color:var(--warn); font-weight:800;'>✨ ${dateFormatted} 신규 추가: ${newlyAdded.length}종</span>`
+        : `<span class='badge'>${dateFormatted} 신규: 0종</span>`;
+        
+      badgeHtml = `${newBadge} <span class='badge' style='margin-left:6px;'>관련 카탈로그 전체: ${categoryProducts.length}종</span>`;
+
+      displayProducts = [...newlyAdded, ...existing];
+    }
+
+    if (!displayProducts || displayProducts.length === 0) {
+      detailBox.innerHTML = `
+        <div style="font-size:14px; font-weight:800; color:var(--text); margin-bottom:8px;">${headerTitle}</div>
+        <div class="meta" style="padding:16px; text-align:center;">해당 일자에 수집된 ${escapeHtml(catKo)} 제품 정보가 없습니다.</div>
+      `;
+      return;
+    }
+
+    const rowsHtml = displayProducts.map(item => {
+      const isNewOnDate = (date !== 'all' && item.first_seen_date === date);
+      const statusBadge = isNewOnDate
+        ? `<span class="badge" style="white-space:nowrap; background:rgba(246, 193, 119, 0.3); color:var(--warn); font-weight:800; border-color:var(--warn);">✨ 신규 추가</span>`
+        : `<span class="badge" style="white-space:nowrap; opacity:0.75;">기존</span>`;
+
+      const rowBg = isNewOnDate ? `style="background: rgba(246, 193, 119, 0.08);"` : '';
+
+      return `<tr ${rowBg}>
+        <td data-label="구분" style="white-space:nowrap; width:120px;">${statusBadge}</td>
+        <td data-label="제품명 (Product Name)" style="font-weight:700; color:var(--text);">${escapeHtml(item.product_name || '')}</td>
+        <td data-label="최초 감지일" style="white-space:nowrap;">${escapeHtml(item.first_seen_date || '')}</td>
+        <td data-label="최근 확인일" style="white-space:nowrap;">${escapeHtml(item.last_seen_date || '')}</td>
+        <td data-label="태그" class="meta">${escapeHtml(item.category_tags || '')}</td>
+      </tr>`;
+    }).join('');
+
+    detailBox.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:12px; border-bottom:1px solid var(--border); padding-bottom:8px;">
+        <div style="font-size:14px; font-weight:800; color:var(--text);">${headerTitle}</div>
+        <div>${badgeHtml}</div>
+      </div>
+      <div class="table-wrap monitor-table-wrap">
+        <table class="table monitor-table">
+          <thead>
+            <tr>
+              <th style="width:120px; white-space:nowrap;">구분</th>
+              <th>제품명 (Product Name)</th>
+              <th style="width:120px;">최초 감지일</th>
+              <th style="width:120px;">최근 확인일</th>
+              <th>관련 태그</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  document.addEventListener("DOMContentLoaded", function() {
+    const targetCell = document.querySelector('.heatmap-cell.heatmap-new') || document.querySelector('.heatmap-cell:not(.heatmap-0)');
+    if (targetCell) {
+      onHeatmapCellClick(targetCell);
+    }
+  });
+})();
+</script>
+
+        </div>
+      </details>
+    </div>
+
+    <div class="section collapsed-section">
+      <details>
+        <summary class="section-summary">
+          <span>최근 실행 이력</span>
+          <span class="meta">펼쳐서 최근 실행 결과 보기</span>
+        </summary>
+        <div class="section-body">
+          <div class='table-wrap monitor-table-wrap'><table class='table monitor-table'><thead><tr><th>날짜</th><th>생성 시각</th><th>뉴스</th><th>감시</th></tr></thead><tbody><tr><td data-label='날짜'>2026-08-08</td><td data-label='생성 시각'>2026-08-08T09:32+09:00</td><td data-label='뉴스'>기사 14 / 사건 4</td><td data-label='감시'>업데이트 1 / 확인 필요 0</td></tr><tr><td data-label='날짜'>2026-08-07</td><td data-label='생성 시각'>2026-08-07T10:53+09:00</td><td data-label='뉴스'>기사 22 / 사건 15</td><td data-label='감시'>업데이트 1 / 확인 필요 0</td></tr><tr><td data-label='날짜'>2026-08-06</td><td data-label='생성 시각'>2026-08-06T10:07+09:00</td><td data-label='뉴스'>기사 20 / 사건 11</td><td data-label='감시'>업데이트 1 / 확인 필요 0</td></tr><tr><td data-label='날짜'>2026-08-05</td><td data-label='생성 시각'>2026-08-05T10:07+09:00</td><td data-label='뉴스'>기사 16 / 사건 9</td><td data-label='감시'>업데이트 1 / 확인 필요 0</td></tr><tr><td data-label='날짜'>2026-08-04</td><td data-label='생성 시각'>2026-08-04T10:08+09:00</td><td data-label='뉴스'>기사 27 / 사건 15</td><td data-label='감시'>업데이트 1 / 확인 필요 0</td></tr><tr><td data-label='날짜'>2026-08-03</td><td data-label='생성 시각'>2026-08-03T15:44+09:00</td><td data-label='뉴스'>기사 24 / 사건 17</td><td data-label='감시'>업데이트 0 / 확인 필요 0</td></tr><tr><td data-label='날짜'>2026-08-03</td><td data-label='생성 시각'>2026-08-03T14:46+09:00</td><td data-label='뉴스'>기사 24 / 사건 17</td><td data-label='감시'>업데이트 0 / 확인 필요 0</td></tr></tbody></table></div>
+        </div>
+      </details>
+    </div>
+  </div>
+</body>
+</html>
